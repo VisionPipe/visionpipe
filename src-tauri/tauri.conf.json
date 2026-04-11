@@ -10,6 +10,7 @@
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "windows": [
       {
@@ -30,9 +31,5 @@
       "csp": null
     }
   },
-  "plugins": {
-    "global-shortcut": {
-      "shortcuts": ["CmdOrCtrl+Shift+C"]
-    }
-  }
+  "plugins": {}
 }

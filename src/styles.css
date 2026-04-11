@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
-body {
+html, body {
   margin: 0;
+  padding: 0;
+  background: transparent !important;
+}
+
+#root {
   background: transparent;
 }

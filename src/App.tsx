@@ -48,40 +48,47 @@ function App() {
   // Calculate credits for this capture
   const captureCredits = 1 + (annotation.trim() ? 0 : 0) + (transcript ? 2 : 0);
 
+  const startCapture = useCallback(async () => {
+    if (captured) return;
+    console.log("[VisionPipe] Starting capture flow");
+    setCaptured(true);
+
+    try {
+      const meta = await invoke<CaptureMetadata>("get_metadata");
+      setMetadata({
+        ...meta,
+        captureWidth: PLACEHOLDER_METADATA.captureWidth,
+        captureHeight: PLACEHOLDER_METADATA.captureHeight,
+        captureMethod: "region",
+      });
+    } catch {
+      setMetadata({ ...PLACEHOLDER_METADATA, timestamp: new Date().toISOString() });
+    }
+
+    setTimeout(() => textareaRef.current?.focus(), 100);
+  }, [captured]);
+
   useEffect(() => {
+    // Listen for the capture event from Rust
     const unlisten = listen("start-capture", async () => {
-      setCaptured(true);
-
-      // Fetch metadata and screenshot in parallel
-      const [metaResult, screenshotResult] = await Promise.allSettled([
-        invoke<CaptureMetadata>("get_metadata"),
-        invoke<string>("take_screenshot", { x: 0, y: 0, width: 800, height: 600 }),
-      ]);
-
-      if (metaResult.status === "fulfilled") {
-        setMetadata({
-          ...metaResult.value,
-          captureWidth: PLACEHOLDER_METADATA.captureWidth,
-          captureHeight: PLACEHOLDER_METADATA.captureHeight,
-          captureMethod: "region",
-        });
-      } else {
-        setMetadata({ ...PLACEHOLDER_METADATA, timestamp: new Date().toISOString() });
-      }
-
-      if (screenshotResult.status === "fulfilled") {
-        setScreenshotDataUrl(screenshotResult.value);
-      } else {
-        setScreenshotDataUrl(null);
-      }
-
-      setTimeout(() => textareaRef.current?.focus(), 100);
+      console.log("[VisionPipe] start-capture event received");
+      startCapture();
     });
+
+    // Also trigger on window focus as a fallback
+    const onFocus = () => {
+      console.log("[VisionPipe] Window focused, captured:", captured);
+      if (!captured) {
+        startCapture();
+      }
+    };
+    window.addEventListener("focus", onFocus);
 
     return () => {
       unlisten.then((fn) => fn());
+      window.removeEventListener("focus", onFocus);
     };
-  }, []);
+  }, [captured]);
 
   const handleSubmit = useCallback(async () => {
     const lines: string[] = [];
