@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText, writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import logoUrl from "./images/visionpipe-logo.svg";
@@ -252,18 +252,17 @@ function App() {
       }
     }
 
-    // Copy composite image to clipboard
+    // Copy composite image to clipboard via Tauri's native clipboard plugin
     try {
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((b) => b ? resolve(b) : reject(new Error("toBlob failed")), "image/png");
       });
-      await navigator.clipboard.write([
-        new ClipboardItem({ "image/png": blob })
-      ]);
-      console.log("[VisionPipe] Composite image copied to clipboard");
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      await writeImage(uint8Array);
+      console.log("[VisionPipe] Composite image copied to clipboard via Tauri");
     } catch (err) {
       console.error("[VisionPipe] Image clipboard failed, falling back to text:", err);
-      // Fallback: copy as text
       const lines: string[] = [];
       if (annotation.trim()) lines.push(annotation.trim(), "");
       if (transcript.trim()) lines.push(`[voice] ${transcript.trim()}`, "");
