@@ -225,7 +225,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup.
 
 ## Questions?
 
-Open an issue or reach out on [Twitter](https://twitter.com) / [Discord](https://discord.gg).
+Open an issue or reach out on [X](https://x.com/vision_pipe).
 
 ---
 
