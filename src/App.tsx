@@ -93,27 +93,35 @@ function App() {
     if (w < 10 || h < 10) return;
 
     const win = getCurrentWindow();
-    // Get the window's position on screen (physical pixels) so we can
-    // translate viewport-relative clientX/Y to absolute screen coords.
+    // Get the window's position on screen so we can translate
+    // viewport-relative clientX/Y to absolute screen coords.
+    // outerPosition() returns physical pixels, so divide by DPR
+    // since the screenshots crate uses macOS point coordinates.
     const winPos = await win.outerPosition();
     await win.hide();
     await new Promise((r) => setTimeout(r, 150));
 
     const dpr = window.devicePixelRatio || 1;
-    const physX = Math.round(x * dpr) + winPos.x;
-    const physY = Math.round(y * dpr) + winPos.y;
-    const physW = Math.round(w * dpr);
-    const physH = Math.round(h * dpr);
+    // macOS CGDisplayCreateImageForRect uses point (logical) coords,
+    // NOT physical pixels. Pass CSS pixel values directly.
+    const captureX = Math.round(x + winPos.x / dpr);
+    const captureY = Math.round(y + winPos.y / dpr);
+    const captureW = Math.round(w);
+    const captureH = Math.round(h);
 
     try {
       const screenshot = await invoke<string>("take_screenshot", {
-        x: physX, y: physY, width: physW, height: physH
+        x: captureX, y: captureY, width: captureW, height: captureH
       });
       setCroppedScreenshot(screenshot);
     } catch (err) {
       console.error("[VisionPipe] Region capture failed:", err);
       setCroppedScreenshot(null);
     }
+
+    // Report physical pixel dimensions for metadata (the actual image is at native resolution)
+    const physW = Math.round(captureW * dpr);
+    const physH = Math.round(captureH * dpr);
 
     try {
       const meta = await invoke<CaptureMetadata>("get_metadata");
