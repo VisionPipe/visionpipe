@@ -14,9 +14,9 @@
     "windows": [
       {
         "title": "VisionPipe",
-        "width": 400,
-        "height": 300,
-        "resizable": false,
+        "width": 920,
+        "height": 460,
+        "resizable": true,
         "visible": false,
         "decorations": false,
         "transparent": true

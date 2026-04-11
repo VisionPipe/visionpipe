@@ -23,6 +23,7 @@ serde_json = "1"
 screenshots = "0.8"
 image = "0.25"
 base64 = "0.22"
+chrono = "0.4"
 
 # Audio capture
 cpal = "0.15"

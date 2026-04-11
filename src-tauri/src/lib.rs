@@ -1,14 +1,21 @@
 use tauri::{
     tray::TrayIconBuilder,
+    Emitter,
     Manager,
 };
 
 mod capture;
+mod metadata;
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
     capture::capture_region(x, y, width, height)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
+    Ok(metadata::collect_metadata())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,7 +45,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot])
+        .invoke_handler(tauri::generate_handler![take_screenshot, get_metadata])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
