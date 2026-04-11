@@ -4,6 +4,31 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-04-11 20:15 UTC
+
+### Summary of changes since last update
+
+Applied the earthy color rebrand (Teal/Amber/Cream/Forest/Sienna palette), switched to SVG logo, implemented composite image clipboard output (screenshot + annotation + metadata baked into one PNG), and fixed annotation UI layout with fixed dimensions.
+
+### Detail of changes made:
+
+- **Earthy rebrand** (`App.tsx`, `styles.css`): Replaced all blue (#3b82f6) with Teal (#2e8b7a), navy backgrounds with Forest (#1a2a20) and Deep Forest (#141e18), red with Burnt Sienna (#c0462a), green accents with Amber (#d4882a). Text uses Cream (#f5f0e8) for headings, muted green (#8a9a8a) for secondary. Typography changed to Verdana for UI, Source Code Pro for monospace. All colors defined in a `C` constant object for consistency.
+- **SVG logo** (`App.tsx`): Replaced the inline base64 PNG (which rendered poorly) with the proper SVG file at `src/images/visionpipe-logo.svg`. Imported as a Vite asset URL, rendered at 32x32px in the sidebar.
+- **Composite image clipboard** (`App.tsx`): The `handleSubmit` function now creates a canvas, draws the captured screenshot at the top, then renders a dark panel below with the annotation text (word-wrapped at 70 chars), voice transcript, and structured metadata. The entire canvas is converted to PNG and written to the clipboard via `navigator.clipboard.write(ClipboardItem)`. Falls back to text-only if image clipboard fails.
+- **Fixed annotation UI layout** (`App.tsx`): Switched outer container from Tailwind `h-screen` classes to inline styles with fixed dimensions (880x460px card). Sidebar is 250px fixed width. Screenshot area fills remaining space with `flex: 1`. This prevents the layout from stretching to fill a full-screen window.
+- **Added clipboard image permission** (`capabilities/default.json`): Added `clipboard-manager:allow-write-image` and `clipboard-manager:allow-read-text`.
+- **All styles converted to inline**: Moved from Tailwind classes to inline `style` props throughout the annotation UI to avoid class resolution issues and ensure reliable rendering.
+
+### Potential concerns to address:
+
+- **Composite image font rendering**: Canvas text rendering uses system fonts. If Verdana or Source Code Pro aren't installed, the fallback fonts may look different from the UI. Consider bundling fonts or using a simpler font stack for the canvas.
+- **`navigator.clipboard.write` compatibility**: The web Clipboard API for images may not work in all Tauri webview configurations. May need to fall back to Tauri's `clipboard-manager:write-image` plugin instead.
+- **SVG logo is 197KB**: The logo SVG has very complex paths (likely exported from a design tool). Could be optimized with SVGO to reduce size significantly.
+- **Drawing tools still non-functional**: Canvas drawing not implemented — toolbar is visual only.
+- **Voice transcription still stubbed**.
+
+---
+
 ## Progress Update as of 2026-04-11 19:45 UTC
 
 ### Summary of changes since last update
