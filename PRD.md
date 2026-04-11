@@ -261,8 +261,12 @@ Composite image is the default because it works with every LLM and every app wit
 ### Drawing Persistence
 Drawings are baked into the PNG. VisionPipe is a capture-and-go tool, not an editor. If someone wants to re-annotate, they take a new capture.
 
-### Whisper Model
-Ship with **tiny** (39MB) for fast, small downloads. Allow users to download larger models (base, small) from settings for better accuracy.
+### Whisper Model & Runtime
+- **Runtime:** Candle (HuggingFace pure-Rust ML framework) with Metal acceleration on Apple Silicon
+- **Bundled model:** Whisper Base (74MB) — best balance of accuracy, speed, and download size
+- **On Apple Silicon with Metal:** near-instant transcription for short voice annotations
+- **On Intel/Windows:** CPU inference via candle, still fast for short clips
+- **Upgradeable:** Users can download Small (244MB) or CrisperWhisper from settings for better accuracy
 
 ## Open Questions
 
