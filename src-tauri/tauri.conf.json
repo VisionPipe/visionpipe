@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-conf-schema/main/schema.json",
+  "productName": "VisionPipe",
+  "version": "0.1.0",
+  "identifier": "com.visionpipe.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "VisionPipe",
+        "width": 400,
+        "height": 300,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "global-shortcut": {
+      "shortcuts": ["CmdOrCtrl+Shift+C"]
+    }
+  }
+}
