@@ -4,6 +4,31 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-04-11 19:45 UTC
+
+### Summary of changes since last update
+
+Implemented working region selection capture flow, replaced app icons with the VisionPipe camera logo, added Tauri v2 capabilities permissions (root cause of most prior failures), embedded the logo as base64, added fullscreen capture command, and enabled devtools for debugging.
+
+### Detail of changes made:
+
+- **Added Tauri v2 capabilities/permissions** (`src-tauri/capabilities/default.json`): This was the root cause of the UI never responding to events. Tauri v2 requires explicit permission grants for every frontend API call. Without `core:event:allow-listen`, the `listen("start-capture", ...)` call was silently rejected, so the React app never received the hotkey event. Permissions now cover: core events, window management (show/hide/resize/position/fullscreen/always-on-top), clipboard, dialog, global-shortcut, and shell.
+- **Rewrote capture flow** (`App.tsx`): Three-mode state machine: `idle` → `selecting` → `annotating`. Selection mode shows a dark semi-transparent overlay (`rgba(0,0,0,0.3)`) with crosshair cursor over the transparent Tauri window. User drags to select a region (blue border + dimension label). On mouse release, the overlay hides, waits 150ms, then captures just the selected region via Rust `take_screenshot` command. This avoids the VisionPipe window appearing in the screenshot.
+- **Added fullscreen capture command** (`lib.rs`, `capture.rs`): New `capture_fullscreen` Rust command and `capture::capture_fullscreen()` function for future use. The hotkey handler now sizes the window to fill the monitor using physical pixel dimensions, sets it always-on-top, and emits a simple `"ready"` string payload (not the screenshot data — the original approach of sending megabytes of base64 through the event system was failing silently).
+- **Replaced app icons** (`src-tauri/icons/`): Generated properly-sized RGBA PNGs (32x32, 128x128, 256x256) and a `.icns` bundle from `src/images/logo1.png` using Pillow and `iconutil`. The app now shows the camera logo in Cmd+Tab, dock, and system tray instead of a solid blue square.
+- **Embedded logo as base64** (`App.tsx`): The sidebar logo now uses an inline base64 data URI (`LOGO_DATA_URI` constant) instead of importing the 814KB `logo1.png` file. Renders at 28x28px.
+- **Enabled devtools** (`lib.rs`): `window.open_devtools()` called in debug builds so console errors are visible during development. This was critical for diagnosing the permissions issue.
+- **Removed fragile focus fallback**: The `window.focus` event listener that was causing duplicate captures has been removed. Only the Tauri `start-capture` event triggers the flow now.
+
+### Potential concerns to address:
+
+- **Screenshot timing**: The 150ms delay between hiding the overlay and capturing the region is a heuristic. On slower machines or with window animation, the overlay might still be visible in the capture. May need to increase or use a more reliable signal.
+- **DPR scaling for region capture**: The selection coordinates are in CSS pixels but `take_screenshot` expects physical pixels. The current `dpr` multiplication may not be accurate on all monitor configurations (e.g., non-integer scaling, multi-monitor with different DPRs).
+- **Drawing tools still non-functional**: The toolbar buttons change `activeTool` state but no canvas drawing is implemented.
+- **Voice transcription still stubbed**: Returns a hardcoded string.
+
+---
+
 ## Progress Update as of 2026-04-11 19:15 UTC
 
 ### Summary of changes since last update

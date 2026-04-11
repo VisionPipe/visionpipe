@@ -14,6 +14,12 @@ async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<Stri
 }
 
 #[tauri::command]
+async fn capture_fullscreen() -> Result<String, String> {
+    capture::capture_fullscreen()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
     Ok(metadata::collect_metadata())
 }
@@ -35,6 +41,9 @@ pub fn run() {
             // Ensure window is hidden on startup
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
+                // Open devtools in debug mode
+                #[cfg(debug_assertions)]
+                window.open_devtools();
             }
 
             // Register global shortcut
@@ -44,15 +53,27 @@ pub fn run() {
                 if event.state == ShortcutState::Pressed {
                     eprintln!("[VisionPipe] Shortcut triggered!");
                     if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.center();
+                        // Size window to fill the screen
+                        if let Ok(Some(monitor)) = window.current_monitor() {
+                            let size = monitor.size();
+                            let pos = monitor.position();
+                            let _ = window.set_position(tauri::Position::Physical(
+                                tauri::PhysicalPosition::new(pos.x, pos.y)
+                            ));
+                            let _ = window.set_size(tauri::Size::Physical(
+                                tauri::PhysicalSize::new(size.width, size.height)
+                            ));
+                            eprintln!("[VisionPipe] Window sized to {}x{}", size.width, size.height);
+                        }
                         let _ = window.show();
                         let _ = window.set_focus();
-                        // Delay the event so the webview has time to become active
+                        let _ = window.set_always_on_top(true);
+                        // Simple event with no payload — frontend handles the rest
                         let handle = window.clone();
                         std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(200));
-                            eprintln!("[VisionPipe] Emitting start-capture event");
-                            let _ = handle.emit("start-capture", ());
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                            eprintln!("[VisionPipe] Emitting start-capture");
+                            let _ = handle.emit("start-capture", "ready");
                         });
                     }
                 }
@@ -60,7 +81,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, get_metadata])
+        .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, get_metadata])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
