@@ -4,6 +4,31 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-04-11 21:00 UTC
+
+### Summary of changes since last update
+
+Expanded metadata collection from 6 fields to 19 fields, updated the composite image panel to use consistent 14px Verdana body font for metadata (matching instruction text styling), and expanded the sidebar metadata display.
+
+### Detail of changes made:
+
+- **Expanded metadata.rs** (`src-tauri/src/metadata.rs`): Rewrote from ~30 lines to ~420 lines. Added 13 new fields: `osBuild`, `hostname`, `username`, `locale`, `timezone`, `displayCount`, `primaryDisplay`, `colorSpace`, `cpu`, `memoryGb`, `darkMode`, `battery`, `uptime`, `activeUrl`. Each field uses macOS-specific system commands (AppleScript, `system_profiler`, `sysctl`, `sw_vers`, `pmset`, `defaults`) with cross-platform stubs returning sensible defaults.
+- **Updated TypeScript CaptureMetadata interface** (`src/App.tsx`): Expanded from 6 fields to 19+ fields (including 3 frontend-added fields: `captureWidth`, `captureHeight`, `captureMethod`) with proper camelCase field names matching Rust's `#[serde(rename_all = "camelCase")]`.
+- **Composite image panel metadata styling** (`src/App.tsx`): Changed metadata lines from `monoFont` (12px Source Code Pro) / `C.textDim` to `bodyFont` (14px Verdana) / `C.textMuted`, matching the fallback instruction text styling. All new metadata fields displayed in the composite image with pipe-separated formatting.
+- **Sidebar metadata block** (`src/App.tsx`): Expanded from 4 lines (app, window, resolution, os) to 9 lines including CPU, memory, user@hostname, battery, and active URL. Added `maxHeight: 120` with `overflowY: auto` to prevent sidebar overflow. Reduced font to 9px to fit more info.
+- **Text fallback clipboard** (`src/App.tsx`): Updated text-only fallback to include all expanded metadata fields.
+- **Browser URL detection** (`metadata.rs`): Detects active URL from Safari, Chrome, Firefox, Arc, Brave, Edge, Opera, and Vivaldi via AppleScript.
+
+### Potential concerns to address:
+
+- **Long metadata lines in composite image**: Some metadata lines (CPU name, display info) can be very long and may overflow the canvas width on narrow screenshots. Consider word-wrapping or truncating.
+- **AppleScript permissions**: Several metadata collection functions use AppleScript (`osascript`). Users may see permission dialogs on first use, especially for `get_active_url` which accesses browser data.
+- **`system_profiler` performance**: `get_screen_info` and `get_display_info` both call `system_profiler SPDisplaysDataType -json` independently. Could be combined into a single call for performance.
+- **Drawing tools still non-functional**: Canvas drawing not implemented — toolbar is visual only.
+- **Voice transcription still stubbed**.
+
+---
+
 ## Progress Update as of 2026-04-11 20:15 UTC
 
 ### Summary of changes since last update
