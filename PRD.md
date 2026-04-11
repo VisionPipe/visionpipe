@@ -36,7 +36,7 @@ The clipboard payload includes: the image, all annotations, and structured metad
 ### Core Features (v0.1 — MVP)
 
 #### 1. Global Hotkey
-- Default: `Cmd+Shift+V` (Mac), `Ctrl+Shift+V` (Windows)
+- Default: `Cmd+Shift+C` (Mac), `Ctrl+Shift+C` (Windows)
 - Configurable via settings
 - Works from any application
 - Should not conflict with common system shortcuts
@@ -72,28 +72,36 @@ After region is selected, a floating panel appears with three modes:
 All three modes can be combined in a single capture.
 
 #### 4. Clipboard Payload
-On submit, the clipboard contains:
-- The screenshot image (PNG)
-- Structured text block with:
-  - User annotation (transcript + typed text)
-  - All metadata fields (see Metadata section below)
+Three clipboard modes (configurable in settings):
 
-Format:
+**Default: Composite Image**
+A single PNG containing the screenshot (with any drawings baked in), plus a rendered panel below with the annotation text and metadata. One image, one paste, works with every LLM.
+
 ```
-[Image is on clipboard — paste to include screenshot]
-
-## Context
-Why is this button misaligned in dark mode?
-
-## Metadata
-- App: Visual Studio Code (com.microsoft.VSCode)
-- Window: visionpipe — App.tsx
-- Screen: 2560x1600 @ 2x (Display P3)
-- Region: 1200x800 from (240, 180)
-- OS: macOS 15.3.2
-- Timestamp: 2026-04-11T14:32:01Z
-- VisionPipe v0.1.0
+┌─────────────────────────────┐
+│                             │
+│   [Screenshot with          │
+│    drawings baked in]       │
+│                             │
+├─────────────────────────────┤
+│ Context:                    │
+│ Why is this button          │
+│ misaligned in dark mode?    │
+│                             │
+│ App: Visual Studio Code     │
+│ Window: visionpipe — App.tsx│
+│ Screen: 2560x1600 @ 2x     │
+│ OS: macOS 15.3.2            │
+│ 2026-04-11T14:32:01Z        │
+│ VisionPipe v0.1.0           │
+└─────────────────────────────┘
 ```
+
+**Alternative: Split Clipboard**
+Image and text placed as separate clipboard types. Image-aware apps receive the image; text fields receive the annotation + metadata as structured text.
+
+**Alternative: Two-Step Paste**
+First `Cmd+V` pastes the image. Second `Cmd+V` pastes the annotation + metadata text. VisionPipe manages a two-item clipboard queue.
 
 #### 5. System Tray
 - Menu bar icon (Mac) / system tray icon (Windows)
@@ -102,7 +110,8 @@ Why is this button misaligned in dark mode?
 - Quit option
 
 #### 6. Settings
-- Hotkey configuration
+- Hotkey configuration (default: `Cmd+Shift+C` / `Ctrl+Shift+C`)
+- Clipboard mode: Composite Image (default), Split Clipboard, Two-Step Paste
 - Default annotation mode (text/voice/draw)
 - Metadata: toggle which fields to include
 - Image format (PNG/JPEG) and quality
@@ -231,10 +240,31 @@ Why is this button misaligned in dark mode?
 
 ---
 
+## Decisions
+
+### Hotkey
+- **Default:** `Cmd+Shift+C` (Mac), `Ctrl+Shift+C` (Windows)
+- Configurable in settings
+- Minor conflict: `Cmd+Shift+C` is "Copy as HTML" in Chrome DevTools (only when DevTools is focused). Acceptable tradeoff — configurable if it bothers anyone.
+
+### Clipboard Format
+Three modes, selectable in settings:
+
+| Mode | Description | Default |
+|---|---|---|
+| **Composite Image** | Screenshot + drawings + annotation text + metadata baked into a single PNG. One paste, works everywhere. | **Yes (default)** |
+| **Split Clipboard** | Image and text placed as separate clipboard types. Image-aware apps get the image; text fields get the annotation + metadata. | No |
+| **Two-Step Paste** | First `Cmd+V` pastes the image, second `Cmd+V` pastes the text/metadata. VisionPipe manages a two-item clipboard queue. | No |
+
+Composite image is the default because it works with every LLM and every app with a single paste. Power users who want more control can switch to split or two-step.
+
+### Drawing Persistence
+Drawings are baked into the PNG. VisionPipe is a capture-and-go tool, not an editor. If someone wants to re-annotate, they take a new capture.
+
+### Whisper Model
+Ship with **tiny** (39MB) for fast, small downloads. Allow users to download larger models (base, small) from settings for better accuracy.
+
 ## Open Questions
 
-1. **Hotkey conflict:** `Cmd+Shift+V` is "Paste and Match Style" in some apps. Should we default to a different hotkey?
-2. **Clipboard format:** Should the image and text be separate clipboard entries (so pasting in an image-aware app gives the image, pasting in a text field gives the text)? Or bundled?
-3. **Commercial licensing:** What pricing model? Per-seat? Per-company? One-time vs subscription?
-4. **Whisper model size:** Which Whisper model to bundle? Tiny (39MB) is fast but less accurate. Base (74MB) is better. Small (244MB) might be too large.
-5. **Drawing persistence:** Should drawings be baked into the PNG, or sent as a separate SVG overlay?
+1. **Commercial licensing:** What pricing model? Per-seat? Per-company? One-time vs subscription?
+2. **Composite image layout:** Where should annotation text and metadata render on the composite image? Below the screenshot as a dark panel? Side panel? Overlaid with transparency?
