@@ -268,7 +268,45 @@ Drawings are baked into the PNG. VisionPipe is a capture-and-go tool, not an edi
 - **On Intel/Windows:** CPU inference via candle, still fast for short clips
 - **Upgradeable:** Users can download Small (244MB) or CrisperWhisper from settings for better accuracy
 
+### Credit System
+
+**Model:** Credit-based consumption. Every feature has a credit cost. Credits are tracked locally and displayed to the user so they understand the value of each capture.
+
+**Credit costs:**
+| Feature | Credits |
+|---|---|
+| Region capture + clipboard | 1 |
+| Text annotation | 0 |
+| Drawing annotation | 0 |
+| Voice transcription (Whisper Base) | 2 |
+| Voice transcription (larger model) | 5 |
+| Basic metadata (app, window, timestamp) | 0 |
+| Extended metadata (browser URL, viewport) | 1 |
+
+**Personal use (free):**
+- Unlimited credits — no cap, no auth, no server needed
+- Credit counter is purely informational ("47 credits used this session")
+- Builds usage awareness so users understand their consumption pattern
+- Trust-based: we trust personal users to self-identify
+
+**Commercial use (paid):**
+- Credit packs or monthly allotment (pricing TBD)
+- Requires account + Stripe integration
+- Backend on Vercel (Next.js API routes + database)
+- App validates license and syncs credit balance
+
+**Offline behavior:**
+- Personal: always works, fully offline
+- Commercial: cached credit balance, sync when online, deduct locally
+
+### Backend (Commercial — Future)
+- **Hosting:** Vercel (Next.js API routes)
+- **Auth:** TBD (likely NextAuth or Clerk)
+- **Payments:** Stripe
+- **Database:** TBD (Vercel Postgres, PlanetScale, or Turso)
+- Deferred to v0.2+ — v0.1 is fully offline with local credit tracking only
+
 ## Open Questions
 
-1. **Commercial licensing:** What pricing model? Per-seat? Per-company? One-time vs subscription?
-2. **Composite image layout:** Where should annotation text and metadata render on the composite image? Below the screenshot as a dark panel? Side panel? Overlaid with transparency?
+1. **Commercial credit pricing:** How much do credit packs cost? Monthly allotment vs pay-as-you-go?
+2. **Composite image layout:** Where should annotation text and metadata render? Below the screenshot as a dark panel? Side panel? Overlaid with transparency?
