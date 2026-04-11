@@ -1,6 +1,6 @@
 # VisionPipe
 
-Give your LLM eyes. `screenshot | llm` — now a reality.
+## Give your LLM eyes. `screenshot | llm` — now a reality.
 
 VisionPipe is a lightweight open source Mac and Windows utility built with [Tauri](https://tauri.app) that captures your screen and pipes it — along with rich contextual metadata — directly into any LLM. GPT-4, Gemini, Claude, OpenAI Codex, or any AI that accepts images. Capture, annotate, and paste full visual context in one keystroke.
 
