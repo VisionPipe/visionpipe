@@ -41,9 +41,11 @@ pub fn run() {
             // Ensure window is hidden on startup
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
-                // Open devtools in debug mode
-                #[cfg(debug_assertions)]
-                window.open_devtools();
+                // Devtools disabled — opening them shifts the webview
+                // and causes capture region offsets.
+                // Uncomment temporarily if needed for debugging:
+                // #[cfg(debug_assertions)]
+                // window.open_devtools();
             }
 
             // Register global shortcut
