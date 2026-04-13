@@ -45,46 +45,38 @@ async fn save_and_copy_image(png_bytes: Vec<u8>) -> Result<String, String> {
     fs::write(&filepath, &png_bytes).map_err(|e| e.to_string())?;
     eprintln!("[VisionPipe] Saved {} ({} bytes)", filepath, png_bytes.len());
 
-    // Set clipboard to the file using osascript so Finder paste works.
-    // This sets both the file reference and the PNG data on the pasteboard.
-    let script = format!(
-        r#"
-        use framework "AppKit"
-        set thePath to POSIX path of "{}"
-        set theFile to current application's NSData's dataWithContentsOfFile:thePath
-        set theURL to current application's |NSURL|'s fileURLWithPath:thePath
+    // Set clipboard with both file URL (for Finder paste) and PNG data
+    // (for image-accepting apps like Claude, Preview).
+    // Uses JXA (JavaScript for Automation) with NSPasteboardItem to hold
+    // multiple representations on a single pasteboard item.
+    let jxa_script = format!(
+        r#"ObjC.import('AppKit');
+ObjC.import('Foundation');
+var path = '{}';
+var data = $.NSData.dataWithContentsOfFile(path);
+var url = $.NSURL.fileURLWithPath(path);
 
-        set pb to current application's NSPasteboard's generalPasteboard()
-        pb's clearContents()
+// Create a pasteboard item with multiple representations
+var item = $.NSPasteboardItem.alloc.init;
+item.setDataForType(data, $.NSPasteboardTypePNG);
+item.setStringForType(url.absoluteString.js, $.NSPasteboardTypeFileURL);
 
-        -- Write PNG data (for image-accepting apps like Claude, Preview)
-        pb's setData:theFile forType:(current application's NSPasteboardTypePNG)
-
-        -- Write file URL (for Finder paste)
-        pb's writeObjects:{{theURL}}
-        "#,
+var pb = $.NSPasteboard.generalPasteboard;
+pb.clearContents;
+pb.writeObjects($.NSArray.arrayWithObject(item));"#,
         filepath
     );
 
-    let status = Command::new("osascript")
-        .args(["-l", "JavaScript", "-e", &format!(
-            r#"
-            ObjC.import('AppKit');
-            var path = '{}';
-            var data = $.NSData.dataWithContentsOfFile(path);
-            var url = $.NSURL.fileURLWithPath(path);
-            var pb = $.NSPasteboard.generalPasteboard;
-            pb.clearContents;
-            pb.setDataForType(data, $.NSPasteboardTypePNG);
-            pb.writeObjects([url]);
-            "#,
-            filepath
-        )])
-        .status()
+    let output = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &jxa_script])
+        .output()
         .map_err(|e| e.to_string())?;
 
-    if !status.success() {
-        // Fallback: just set PNG data via AppleScript
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[VisionPipe] JXA clipboard failed: {}", stderr);
+
+        // Fallback: try AppleScript to at least set PNG data
         let _ = Command::new("osascript")
             .args(["-e", &format!(
                 r#"set the clipboard to (read (POSIX file "{}") as «class PNGf»)"#,
