@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { writeText, writeImage } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import logoUrl from "./images/visionpipe-logo.svg";
@@ -437,7 +437,7 @@ function App() {
       }
     }
 
-    // Copy composite image to clipboard via Tauri's native clipboard plugin
+    // Save PNG to disk and copy to clipboard (with file reference for Finder paste)
     try {
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((b) => b ? resolve(b) : reject(new Error("toBlob failed")), "image/png");
@@ -445,8 +445,8 @@ function App() {
       const arrayBuffer = await blob.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
       console.log(`[VisionPipe] Canvas: ${canvas.width}x${canvas.height}, PNG blob: ${(blob.size / 1048576).toFixed(1)} MB`);
-      await writeImage(uint8Array);
-      console.log("[VisionPipe] Composite image copied to clipboard via Tauri");
+      const savedPath = await invoke<string>("save_and_copy_image", { pngBytes: Array.from(uint8Array) });
+      console.log(`[VisionPipe] Saved and copied: ${savedPath}`);
     } catch (err) {
       console.error("[VisionPipe] Image clipboard failed, falling back to text:", err);
       const lines: string[] = [];
