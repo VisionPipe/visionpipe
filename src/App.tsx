@@ -47,6 +47,7 @@ interface CaptureMetadata {
   captureWidth: number;
   captureHeight: number;
   captureMethod: string;
+  imageSizeKb: number;
 }
 
 interface SelectionRect {
@@ -54,6 +55,27 @@ interface SelectionRect {
   startY: number;
   endX: number;
   endY: number;
+}
+
+/** Measure actual image dimensions and file size from a base64 data URI */
+async function measureImageDims(dataUri: string | null): Promise<{ captureWidth: number; captureHeight: number; imageSizeKb: number }> {
+  if (!dataUri) return { captureWidth: 0, captureHeight: 0, imageSizeKb: 0 };
+
+  // Estimate file size from base64 (data URI header + base64 payload)
+  const base64Start = dataUri.indexOf(",") + 1;
+  const base64Len = dataUri.length - base64Start;
+  const imageSizeKb = Math.round((base64Len * 3) / 4 / 1024);
+
+  // Load image to get actual pixel dimensions
+  const img = new Image();
+  const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => resolve({ w: 0, h: 0 });
+    img.src = dataUri;
+  });
+
+  console.log(`[VisionPipe] Actual image: ${dims.w}x${dims.h}, ~${imageSizeKb} KB`);
+  return { captureWidth: dims.w, captureHeight: dims.h, imageSizeKb };
 }
 
 function App() {
@@ -109,23 +131,23 @@ function App() {
     const captureW = Math.round(w);
     const captureH = Math.round(h);
 
+    let screenshotDataUri: string | null = null;
     try {
-      const screenshot = await invoke<string>("take_screenshot", {
+      screenshotDataUri = await invoke<string>("take_screenshot", {
         x: captureX, y: captureY, width: captureW, height: captureH
       });
-      setCroppedScreenshot(screenshot);
+      setCroppedScreenshot(screenshotDataUri);
     } catch (err) {
       console.error("[VisionPipe] Region capture failed:", err);
       setCroppedScreenshot(null);
     }
 
-    // Report physical pixel dimensions for metadata (the actual image is at native resolution)
-    const physW = Math.round(captureW * dpr);
-    const physH = Math.round(captureH * dpr);
+    // Measure actual image dimensions from the captured data
+    const imgDims = await measureImageDims(screenshotDataUri);
 
     try {
       const meta = await invoke<CaptureMetadata>("get_metadata");
-      setMetadata({ ...meta, captureWidth: physW, captureHeight: physH, captureMethod: "region" });
+      setMetadata({ ...meta, ...imgDims, captureMethod: "region" });
     } catch {
       setMetadata({
         app: "Unknown", window: "Unknown",
@@ -136,7 +158,7 @@ function App() {
         displayCount: 1, primaryDisplay: "Unknown", colorSpace: "sRGB",
         cpu: "", memoryGb: "", darkMode: false, battery: "Unknown",
         uptime: "", activeUrl: "",
-        captureWidth: physW, captureHeight: physH, captureMethod: "region",
+        ...imgDims, captureMethod: "region",
       });
     }
 
@@ -164,20 +186,21 @@ function App() {
     await new Promise((r) => setTimeout(r, 150));
 
     const dpr = window.devicePixelRatio || 1;
-    const physW = Math.round(screen.width * dpr);
-    const physH = Math.round(screen.height * dpr);
 
+    let screenshotDataUri: string | null = null;
     try {
-      const screenshot = await invoke<string>("capture_fullscreen");
-      setCroppedScreenshot(screenshot);
+      screenshotDataUri = await invoke<string>("capture_fullscreen");
+      setCroppedScreenshot(screenshotDataUri);
     } catch (err) {
       console.error("[VisionPipe] Fullscreen capture failed:", err);
       setCroppedScreenshot(null);
     }
 
+    const imgDims = await measureImageDims(screenshotDataUri);
+
     try {
       const meta = await invoke<CaptureMetadata>("get_metadata");
-      setMetadata({ ...meta, captureWidth: physW, captureHeight: physH, captureMethod: "fullscreen" });
+      setMetadata({ ...meta, ...imgDims, captureMethod: "fullscreen" });
     } catch {
       setMetadata({
         app: "Unknown", window: "Unknown",
@@ -188,7 +211,7 @@ function App() {
         displayCount: 1, primaryDisplay: "Unknown", colorSpace: "sRGB",
         cpu: "", memoryGb: "", darkMode: false, battery: "Unknown",
         uptime: "", activeUrl: "",
-        captureWidth: physW, captureHeight: physH, captureMethod: "fullscreen",
+        ...imgDims, captureMethod: "fullscreen",
       });
     }
 
@@ -243,38 +266,36 @@ function App() {
       ? userComments.join(" ")
       : "No additional comments provided.";
 
-    // Build logical text blocks (will be word-wrapped to fit canvas width)
+    // Build two columns: left = user text, right = capture metadata
+    const username = metadata.username || "User";
+
+    // Left column content (attribution + user request)
     type TextBlock = { text: string; bold: boolean; color: string };
-    const blocks: TextBlock[] = [];
+    const leftBlocks: TextBlock[] = [];
+    leftBlocks.push({ text: `Annotation by VisionPipe.ai`, bold: true, color: C.amber });
+    leftBlocks.push({ text: `Submitted by: ${username}`, bold: false, color: C.textMuted });
+    leftBlocks.push({ text: "", bold: false, color: C.cream }); // spacer
+    leftBlocks.push({ text: `${username}'s request: "${userCommentText}"`, bold: false, color: C.cream });
+    leftBlocks.push({ text: `[User input, passed verbatim by VisionPipe]`, bold: false, color: C.textDim });
 
-    // LLM instruction header
-    blocks.push({ text: "LLM Instructions: This is a screenshot generated by VisionPipe.ai for you to evaluate. Here is what the user had to say about the screenshot above:", bold: true, color: C.amber });
-    blocks.push({ text: "", bold: false, color: C.cream }); // spacer
+    // Right column content (capture metadata)
+    const sizeStr = metadata.imageSizeKb > 1024
+      ? (metadata.imageSizeKb / 1024).toFixed(1) + " MB"
+      : metadata.imageSizeKb + " KB";
+    const metaLines: { text: string; color: string }[] = [
+      { text: "Capture metadata", color: C.amber },
+      { text: `${metadata.captureWidth}x${metadata.captureHeight}px (${sizeStr})`, color: C.textMuted },
+      { text: `${metadata.captureMethod} | ${metadata.app}`, color: C.textMuted },
+      { text: `${metadata.os} (${metadata.osBuild})`, color: C.textMuted },
+      { text: `${metadata.resolution} @ ${metadata.scale}`, color: C.textMuted },
+      { text: `${metadata.cpu}`, color: C.textMuted },
+      { text: `${metadata.memoryGb} | ${metadata.battery}`, color: C.textMuted },
+      { text: `${metadata.username}@${metadata.hostname}`, color: C.textMuted },
+      { text: `${metadata.timestamp}`, color: C.textMuted },
+      { text: `VisionPipe v0.1.0`, color: C.textDim },
+    ];
 
-    // User comments
-    blocks.push({ text: userCommentText, bold: false, color: C.cream });
-    blocks.push({ text: "", bold: false, color: C.cream }); // spacer
-
-    // Instruction for unclear input
-    blocks.push({ text: "If you do not understand the user instructions then do your best to parse the image and provide the user back with your recommendations based on what you find.", bold: false, color: C.textMuted });
-    blocks.push({ text: "", bold: false, color: C.cream }); // spacer
-
-    // Metadata header
-    blocks.push({ text: "Metadata about this image:", bold: true, color: C.amber });
-    blocks.push({ text: `app: ${metadata.app} | window: ${metadata.window}`, bold: false, color: C.textMuted });
-    blocks.push({ text: `os: ${metadata.os} (${metadata.osBuild}) | uptime: ${metadata.uptime}`, bold: false, color: C.textMuted });
-    blocks.push({ text: `display: ${metadata.resolution} @ ${metadata.scale} | ${metadata.primaryDisplay} (${metadata.displayCount} display${metadata.displayCount !== 1 ? "s" : ""})`, bold: false, color: C.textMuted });
-    blocks.push({ text: `cpu: ${metadata.cpu} | memory: ${metadata.memoryGb}`, bold: false, color: C.textMuted });
-    blocks.push({ text: `user: ${metadata.username}@${metadata.hostname} | locale: ${metadata.locale} | tz: ${metadata.timezone}`, bold: false, color: C.textMuted });
-    blocks.push({ text: `color space: ${metadata.colorSpace} | dark mode: ${metadata.darkMode ? "yes" : "no"} | battery: ${metadata.battery}`, bold: false, color: C.textMuted });
-    if (metadata.activeUrl) {
-      blocks.push({ text: `url: ${metadata.activeUrl}`, bold: false, color: C.textMuted });
-    }
-    blocks.push({ text: `captured: ${metadata.timestamp} | region: ${metadata.captureWidth}x${metadata.captureHeight}`, bold: false, color: C.textMuted });
-    blocks.push({ text: "", bold: false, color: C.textMuted }); // spacer
-    blocks.push({ text: `VisionPipe v0.1.0`, bold: false, color: C.textMuted });
-
-    // Determine canvas width first (need it to scale fonts and word-wrap)
+    // Determine canvas width first
     let imgW = 600, imgH = 400;
     let img: HTMLImageElement | null = null;
     if (croppedScreenshot) {
@@ -286,50 +307,66 @@ function App() {
       });
       imgW = img.naturalWidth || 600;
       imgH = img.naturalHeight || 400;
+      console.log(`[VisionPipe] Screenshot dimensions: ${imgW}x${imgH}`);
     }
     const maxW = Math.max(imgW, 500);
 
-    // Target: text panel should be at most 20% of image height.
-    // Find the largest font size that fits, minimum 8px.
+    // Target: text panel at most 20% of image height.
+    // Single font size for all text, binary-searched to fit. Min 8px.
     const maxPanelH = Math.round(imgH * 0.20);
     const minFontSize = 8;
-    const maxFontSize = Math.max(16, Math.round(maxW * 0.022));
+    const maxFontSize = Math.max(16, Math.round(maxW * 0.018));
 
     const makeFont = (bold: boolean, size: number) =>
       `${bold ? "bold " : ""}${size}px Verdana, Geneva, sans-serif`;
 
-    // Word-wrap blocks at a given font size and return rendered lines + total height
-    type RenderedLine = { text: string; font: string; color: string };
-    const layoutAtSize = (size: number) => {
-      const lh = Math.round(size * 1.55);
-      const pad = Math.round(size * 1.5);
-      const areaW = maxW - pad * 2;
-      const lines: RenderedLine[] = [];
-      for (const block of blocks) {
+    // Layout: word-wrap left column into the left 60% of width,
+    // right column in the right 35% (5% gap)
+    type RenderedLine = { text: string; font: string; color: string; x: number };
+    const layoutAtSize = (fontSize: number) => {
+      const lh = Math.round(fontSize * 1.55);
+      const pad = Math.round(fontSize * 1.5);
+      const leftW = Math.round((maxW - pad * 2) * 0.58);
+      const rightX = pad + Math.round((maxW - pad * 2) * 0.63);
+      const rightW = maxW - rightX - pad;
+
+      // Word-wrap left blocks
+      const leftLines: RenderedLine[] = [];
+      for (const block of leftBlocks) {
         if (block.text === "") {
-          lines.push({ text: "", font: makeFont(false, size), color: block.color });
+          leftLines.push({ text: "", font: makeFont(false, fontSize), color: block.color, x: pad });
           continue;
         }
-        const font = makeFont(block.bold, size);
+        const font = makeFont(block.bold, fontSize);
         ctx.font = font;
         const words = block.text.split(/\s+/);
         let cur = "";
         for (const word of words) {
           const test = cur ? cur + " " + word : word;
-          if (ctx.measureText(test).width > areaW && cur) {
-            lines.push({ text: cur, font, color: block.color });
+          if (ctx.measureText(test).width > leftW && cur) {
+            leftLines.push({ text: cur, font, color: block.color, x: pad });
             cur = word;
           } else {
             cur = test;
           }
         }
-        if (cur) lines.push({ text: cur, font, color: block.color });
+        if (cur) leftLines.push({ text: cur, font, color: block.color, x: pad });
       }
-      const totalH = pad * 2 + lines.length * lh;
-      return { lines, totalH, lh, pad };
+
+      // Right column: metadata lines (no word-wrap, just truncate if needed)
+      const rightLines: RenderedLine[] = metaLines.map((m) => ({
+        text: m.text,
+        font: m.color === C.amber ? makeFont(true, fontSize) : makeFont(false, fontSize),
+        color: m.color,
+        x: rightX,
+      }));
+
+      const maxLines = Math.max(leftLines.length, rightLines.length);
+      const totalH = pad * 2 + maxLines * lh;
+      return { leftLines, rightLines, totalH, lh, pad };
     };
 
-    // Binary search for the largest font size that fits within maxPanelH
+    // Binary search for the largest font size that fits
     let lo = minFontSize, hi = maxFontSize;
     while (lo < hi) {
       const mid = Math.ceil((lo + hi) / 2);
@@ -340,7 +377,7 @@ function App() {
       }
     }
     const fontSize = lo;
-    const { lines: panelLines, totalH: panelHeight, lh: lineHeight, pad: panelPadding } = layoutAtSize(fontSize);
+    const { leftLines, rightLines, totalH: panelHeight, lh: lineHeight, pad: panelPadding } = layoutAtSize(fontSize);
 
     if (img && croppedScreenshot) {
       canvas.width = maxW;
@@ -365,13 +402,24 @@ function App() {
       ctx.lineTo(maxW, imgH);
       ctx.stroke();
 
-      // Draw text lines
-      let y = imgH + panelPadding + fontSize; // baseline offset
-      for (const line of panelLines) {
+      // Draw left column
+      let y = imgH + panelPadding;
+      for (const line of leftLines) {
+        y += lineHeight * 0.7;
         ctx.font = line.font;
         ctx.fillStyle = line.color;
-        ctx.fillText(line.text, panelPadding, y);
-        y += lineHeight;
+        ctx.fillText(line.text, line.x, y);
+        y += lineHeight * 0.3;
+      }
+
+      // Draw right column
+      y = imgH + panelPadding;
+      for (const line of rightLines) {
+        y += lineHeight * 0.7;
+        ctx.font = line.font;
+        ctx.fillStyle = line.color;
+        ctx.fillText(line.text, line.x, y);
+        y += lineHeight * 0.3;
       }
     } else {
       // No screenshot — just render the text panel
@@ -379,12 +427,13 @@ function App() {
       canvas.height = panelHeight;
       ctx.fillStyle = C.deepForest;
       ctx.fillRect(0, 0, 500, panelHeight);
-      let y = panelPadding + fontSize;
-      for (const line of panelLines) {
+      let y = panelPadding;
+      for (const line of leftLines) {
+        y += lineHeight * 0.7;
         ctx.font = line.font;
         ctx.fillStyle = line.color;
-        ctx.fillText(line.text, panelPadding, y);
-        y += lineHeight;
+        ctx.fillText(line.text, line.x, y);
+        y += lineHeight * 0.3;
       }
     }
 
@@ -395,6 +444,7 @@ function App() {
       });
       const arrayBuffer = await blob.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
+      console.log(`[VisionPipe] Canvas: ${canvas.width}x${canvas.height}, PNG blob: ${(blob.size / 1048576).toFixed(1)} MB`);
       await writeImage(uint8Array);
       console.log("[VisionPipe] Composite image copied to clipboard via Tauri");
     } catch (err) {
@@ -410,7 +460,7 @@ function App() {
       lines.push(`user: ${metadata.username}@${metadata.hostname} | locale: ${metadata.locale} | tz: ${metadata.timezone}`);
       lines.push(`color space: ${metadata.colorSpace} | dark mode: ${metadata.darkMode ? "yes" : "no"} | battery: ${metadata.battery}`);
       if (metadata.activeUrl) lines.push(`url: ${metadata.activeUrl}`);
-      lines.push(`captured: ${metadata.timestamp} | region: ${metadata.captureWidth}x${metadata.captureHeight}`);
+      lines.push(`captured: ${metadata.timestamp} | image: ${metadata.captureWidth}x${metadata.captureHeight}px (${metadata.imageSizeKb > 1024 ? (metadata.imageSizeKb / 1024).toFixed(1) + " MB" : metadata.imageSizeKb + " KB"}) | ${metadata.captureMethod}`);
       lines.push("---", "VisionPipe v0.1.0");
       await writeText(lines.join("\n"));
     }

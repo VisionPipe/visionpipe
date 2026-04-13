@@ -4,6 +4,7 @@ use std::process::Command;
 /// Read a PNG file from disk and return as a base64 data URI.
 fn png_file_to_data_uri(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let png_bytes = std::fs::read(path)?;
+    eprintln!("[VisionPipe] Captured PNG: {} bytes ({:.1} MB)", png_bytes.len(), png_bytes.len() as f64 / 1_048_576.0);
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     Ok(format!("data:image/png;base64,{}", b64))
 }
@@ -14,7 +15,7 @@ pub fn capture_fullscreen() -> Result<String, Box<dyn std::error::Error>> {
     let tmp = "/tmp/visionpipe-capture.png";
 
     let status = Command::new("screencapture")
-        .args(["-x", tmp]) // -x suppresses shutter sound
+        .args(["-x", "-r", tmp]) // -x suppresses sound, -r captures at native (Retina) resolution
         .status()?;
 
     if !status.success() {
@@ -34,7 +35,7 @@ pub fn capture_region(x: u32, y: u32, width: u32, height: u32) -> Result<String,
     let rect = format!("{},{},{},{}", x, y, width, height);
 
     let status = Command::new("screencapture")
-        .args(["-R", &rect, "-x", tmp])
+        .args(["-R", &rect, "-x", "-r", tmp]) // -r captures at native (Retina) resolution
         .status()?;
 
     if !status.success() {
