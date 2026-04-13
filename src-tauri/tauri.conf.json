@@ -10,13 +10,14 @@
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "windows": [
       {
         "title": "VisionPipe",
-        "width": 400,
-        "height": 300,
-        "resizable": false,
+        "width": 920,
+        "height": 460,
+        "resizable": true,
         "visible": false,
         "decorations": false,
         "transparent": true
@@ -30,9 +31,5 @@
       "csp": null
     }
   },
-  "plugins": {
-    "global-shortcut": {
-      "shortcuts": ["CmdOrCtrl+Shift+C"]
-    }
-  }
+  "plugins": {}
 }

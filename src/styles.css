@@ -1,6 +1,13 @@
 @import "tailwindcss";
 
-body {
+html, body {
   margin: 0;
+  padding: 0;
+  background: transparent !important;
+  font-family: Verdana, Geneva, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
   background: transparent;
 }
