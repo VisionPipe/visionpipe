@@ -4,40 +4,24 @@ This document tracks progress on the `app-iteration` branch of VisionPipe. It is
 
 ---
 
-## Progress Update as of 2026-04-14 12:00 UTC
+## Progress Update as of 2026-04-14 12:15 PT
 
 ### Summary of changes since last update
 
-Added a three-layer architecture for CLI, MCP server, and Claude Code plugin integration. Extracted capture and metadata modules into a shared `visionpipe-core` library crate, built a `vp` CLI binary with window listing and per-app capture, created an MCP server for native Claude Code tool integration, and added a `/screenshot` command with auto-activating skill.
+Added a Claude Code pre-commit hook that automatically blocks git commits if the branch progress document hasn't been updated, enforcing the CLAUDE.md requirement.
 
 ### Detail of changes made:
 
-- **Cargo workspace restructure** (`Cargo.toml`): Created a root workspace manifest with four members: `crates/visionpipe-core`, `crates/vp-cli`, `crates/visionpipe-mcp`, and `src-tauri`. All crates build with a single `cargo build` command.
-- **visionpipe-core library** (`crates/visionpipe-core/`): Extracted `capture.rs` and `metadata.rs` from `src-tauri/src/` into a shared library with zero Tauri dependencies. Added three new modules:
-  - `window.rs` (72 lines): Lists visible macOS windows via JXA calling `CGWindowListCopyWindowInfo`, returning CGWindowIDs. Uses `ObjC.castRefToObject()` to bridge CFArray to NSArray (the `ObjC.deepUnwrap()` approach silently returns empty arrays). `find_window_id()` does case-insensitive substring matching on app names.
-  - `save.rs` (38 lines): Decodes base64 data URI, saves PNG + JSON metadata to `~/Pictures/VisionPipe/` with timestamped filenames.
-  - `capture.rs`: Added `capture_window(window_id: u32)` using `screencapture -l <CGWindowID>` for per-window capture. Made `png_file_to_data_uri` public.
-- **vp CLI binary** (`crates/vp-cli/`, 86 lines): Uses `clap` derive for three subcommands:
-  - `vp list [--json]`: Lists visible windows with ID, app name, and title
-  - `vp capture [--app "Name"]`: Captures fullscreen or a specific app's window, saves to disk, prints file paths to stdout
-  - `vp metadata`: Prints system/app metadata as JSON
-- **MCP server** (`crates/visionpipe-mcp/`, 263 lines): JSON-RPC 2.0 over stdio, wraps the `vp` CLI via subprocess. Exposes three tools: `list_windows`, `capture_screenshot` (with optional `app_name` param), `get_metadata`. Looks for the `vp` binary next to itself first, then falls back to PATH.
-- **Tauri app updated** (`src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`): Added `visionpipe-core` dependency. Replaced `mod capture; mod metadata;` with `use visionpipe_core::{capture, metadata};`.
-- **Claude Code plugin** (`.claude/commands/screenshot.md`, `.claude/skills/visionpipe-capture/SKILL.md`): `/screenshot` slash command guides Claude through MCP capture workflow with CLI fallback. Skill auto-activates on phrases like "what's on my screen" or "take a screenshot".
-- **MCP config** (`.mcp.json`): Registers `visionpipe-mcp` as a local stdio MCP server pointing to the release binary.
+- **Pre-commit hook** (`.claude/settings.json`): New `PreToolUse` prompt hook filtered to `Bash(git commit:*)`. Uses an LLM evaluation to check whether the branch progress file was updated in the current session before allowing the commit. This is project-level (committable) so all contributors get the same guard.
 
 ### Potential concerns to address:
 
-- **Absolute path in `.mcp.json`**: The MCP config uses `/Users/drodio/visionpipe/target/release/visionpipe-mcp`. This must be updated if the project moves (planned move to `~/projects/visionpipe`). Should consider a relative path or dynamic resolution.
-- **Screen recording permission for CLI**: The `vp` binary needs its own macOS Screen Recording permission grant, separate from `VisionPipe.app`. Users will see a system prompt on first use.
-- **JXA window listing quirk**: `ObjC.deepUnwrap()` silently fails on `CGWindowListCopyWindowInfo` results — must use `ObjC.castRefToObject()` instead. This is documented in `window.rs` but could surprise future contributors.
-- **MCP server not yet tested end-to-end**: The server compiles and the protocol implementation is correct, but it hasn't been tested in a live Claude Code session with the MCP tools appearing in the tool palette. Need to verify after project move and new session.
-- **`target/` directory is untracked but large**: The Cargo build output is gitignored but the release binaries must be built before the MCP server works. No install script or Makefile exists yet.
-- **No tests**: Still no unit or integration tests for any component.
+- **Prompt hooks add latency**: The LLM evaluation runs before every `git commit`, adding a few seconds. This is acceptable since commits are infrequent.
+- **LLM judgment is imperfect**: The prompt hook relies on the LLM's assessment of whether the progress file was updated. It could occasionally misjudge, but in practice the context window will contain evidence of the edit.
 
 ---
 
-## Progress Update as of 2026-04-14 18:30 UTC
+## Progress Update as of 2026-04-14 11:30 PT
 
 ### Summary of changes since last update
 
@@ -75,7 +59,40 @@ Major feature additions: onboarding flow with macOS permission checks, native vo
 
 ---
 
-## Progress Update as of 2026-04-14 06:00 UTC
+## Progress Update as of 2026-04-14 05:00 PT
+
+### Summary of changes since last update
+
+Added a three-layer architecture for CLI, MCP server, and Claude Code plugin integration. Extracted capture and metadata modules into a shared `visionpipe-core` library crate, built a `vp` CLI binary with window listing and per-app capture, created an MCP server for native Claude Code tool integration, and added a `/screenshot` command with auto-activating skill.
+
+### Detail of changes made:
+
+- **Cargo workspace restructure** (`Cargo.toml`): Created a root workspace manifest with four members: `crates/visionpipe-core`, `crates/vp-cli`, `crates/visionpipe-mcp`, and `src-tauri`. All crates build with a single `cargo build` command.
+- **visionpipe-core library** (`crates/visionpipe-core/`): Extracted `capture.rs` and `metadata.rs` from `src-tauri/src/` into a shared library with zero Tauri dependencies. Added three new modules:
+  - `window.rs` (72 lines): Lists visible macOS windows via JXA calling `CGWindowListCopyWindowInfo`, returning CGWindowIDs. Uses `ObjC.castRefToObject()` to bridge CFArray to NSArray (the `ObjC.deepUnwrap()` approach silently returns empty arrays). `find_window_id()` does case-insensitive substring matching on app names.
+  - `save.rs` (38 lines): Decodes base64 data URI, saves PNG + JSON metadata to `~/Pictures/VisionPipe/` with timestamped filenames.
+  - `capture.rs`: Added `capture_window(window_id: u32)` using `screencapture -l <CGWindowID>` for per-window capture. Made `png_file_to_data_uri` public.
+- **vp CLI binary** (`crates/vp-cli/`, 86 lines): Uses `clap` derive for three subcommands:
+  - `vp list [--json]`: Lists visible windows with ID, app name, and title
+  - `vp capture [--app "Name"]`: Captures fullscreen or a specific app's window, saves to disk, prints file paths to stdout
+  - `vp metadata`: Prints system/app metadata as JSON
+- **MCP server** (`crates/visionpipe-mcp/`, 263 lines): JSON-RPC 2.0 over stdio, wraps the `vp` CLI via subprocess. Exposes three tools: `list_windows`, `capture_screenshot` (with optional `app_name` param), `get_metadata`. Looks for the `vp` binary next to itself first, then falls back to PATH.
+- **Tauri app updated** (`src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`): Added `visionpipe-core` dependency. Replaced `mod capture; mod metadata;` with `use visionpipe_core::{capture, metadata};`.
+- **Claude Code plugin** (`.claude/commands/screenshot.md`, `.claude/skills/visionpipe-capture/SKILL.md`): `/screenshot` slash command guides Claude through MCP capture workflow with CLI fallback. Skill auto-activates on phrases like "what's on my screen" or "take a screenshot".
+- **MCP config** (`.mcp.json`): Registers `visionpipe-mcp` as a local stdio MCP server pointing to the release binary.
+
+### Potential concerns to address:
+
+- **Absolute path in `.mcp.json`**: The MCP config uses `/Users/drodio/visionpipe/target/release/visionpipe-mcp`. This must be updated if the project moves (planned move to `~/projects/visionpipe`). Should consider a relative path or dynamic resolution.
+- **Screen recording permission for CLI**: The `vp` binary needs its own macOS Screen Recording permission grant, separate from `VisionPipe.app`. Users will see a system prompt on first use.
+- **JXA window listing quirk**: `ObjC.deepUnwrap()` silently fails on `CGWindowListCopyWindowInfo` results — must use `ObjC.castRefToObject()` instead. This is documented in `window.rs` but could surprise future contributors.
+- **MCP server not yet tested end-to-end**: The server compiles and the protocol implementation is correct, but it hasn't been tested in a live Claude Code session with the MCP tools appearing in the tool palette. Need to verify after project move and new session.
+- **`target/` directory is untracked but large**: The Cargo build output is gitignored but the release binaries must be built before the MCP server works. No install script or Makefile exists yet.
+- **No tests**: Still no unit or integration tests for any component.
+
+---
+
+## Progress Update as of 2026-04-13 23:00 PT
 
 ### Summary of changes since last update
 

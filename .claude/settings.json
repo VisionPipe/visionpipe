@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "prompt",
+            "if": "Bash(git commit:*)",
+            "prompt": "The agent is about to run a git commit. Check: has the branch progress document in prd/branch commit updates/<branch-name>.md been updated in this session BEFORE this commit? The CLAUDE.md file requires prepending a new progress entry before every commit. If the progress file has NOT been updated yet, respond with {\"decision\": \"block\", \"reason\": \"You must update the branch progress document in prd/branch commit updates/ before committing. See CLAUDE.md for the required entry format.\"}. If it HAS been updated, allow the commit."
+          }
+        ]
+      }
+    ]
+  }
+}
