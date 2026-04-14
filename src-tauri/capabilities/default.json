@@ -19,6 +19,8 @@
     "core:window:allow-set-decorations",
     "core:window:allow-center",
     "core:window:allow-current-monitor",
+    "core:window:allow-start-dragging",
+    "core:window:allow-outer-position",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-write-image",

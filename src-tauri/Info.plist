@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>VisionPipe uses speech recognition to transcribe voice notes attached to your screenshots. All processing happens on-device.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>VisionPipe uses the microphone to record voice notes that are transcribed and attached to your screenshots.</string>
+</dict>
+</plist>
