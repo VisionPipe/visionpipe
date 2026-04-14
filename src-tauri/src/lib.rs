@@ -4,8 +4,11 @@ use tauri::{
     Manager,
 };
 
-mod capture;
-mod metadata;
+mod audio;
+mod speech;
+
+use visionpipe_core::capture;
+use visionpipe_core::metadata;
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
@@ -22,6 +25,72 @@ async fn capture_fullscreen() -> Result<String, String> {
 #[tauri::command]
 async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
     Ok(metadata::collect_metadata())
+}
+
+/// Check macOS permission status for screen recording, accessibility, microphone, and speech.
+#[tauri::command]
+async fn check_permissions() -> Result<std::collections::HashMap<String, bool>, String> {
+    use std::collections::HashMap;
+    use std::process::Command;
+
+    let mut perms = HashMap::new();
+
+    // Screen recording: attempt a tiny screencapture
+    let tmp = "/tmp/visionpipe-perm-check.png";
+    let sr = Command::new("screencapture")
+        .args(["-x", "-R", "0,0,1,1", tmp])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let sr_ok = sr.status.success() && std::fs::metadata(tmp).map(|m| m.len() > 0).unwrap_or(false);
+    let _ = std::fs::remove_file(tmp);
+    perms.insert("screen_recording".into(), sr_ok);
+
+    // Accessibility: check via AppleScript
+    let ax = Command::new("osascript")
+        .args(["-e", "tell application \"System Events\" to return name of first process"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    perms.insert("accessibility".into(), ax.status.success());
+
+    // Microphone: native check via compiled Objective-C bridge
+    perms.insert("microphone".into(), speech::is_mic_authorized());
+
+    // Speech recognition: native check
+    perms.insert("speech_recognition".into(), speech::is_speech_authorized());
+
+    Ok(perms)
+}
+
+/// Request microphone access via native API (shows system prompt from VisionPipe).
+#[tauri::command]
+async fn request_microphone_access() -> Result<bool, String> {
+    Ok(speech::request_mic_auth())
+}
+
+/// Request speech recognition access via native API (shows system prompt from VisionPipe).
+#[tauri::command]
+async fn request_speech_recognition() -> Result<bool, String> {
+    Ok(speech::request_speech_auth())
+}
+
+/// Open macOS System Settings to the appropriate permission pane.
+#[tauri::command]
+async fn open_permission_settings(permission: String) -> Result<(), String> {
+    use std::process::Command;
+
+    let url = match permission.as_str() {
+        "screen_recording" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        _ => return Err(format!("Unknown permission: {}", permission)),
+    };
+
+    Command::new("open")
+        .arg(url)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 /// Save PNG bytes to ~/Pictures/VisionPipe/ and set clipboard to the file
@@ -88,6 +157,23 @@ pb.writeObjects($.NSArray.arrayWithObject(item));"#,
     Ok(filepath)
 }
 
+#[tauri::command]
+async fn start_recording() -> Result<(), String> {
+    audio::start_recording()
+}
+
+#[tauri::command]
+async fn stop_recording() -> Result<String, String> {
+    // Run the blocking transcription (swift subprocess) on a separate thread
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = audio::stop_recording_and_transcribe();
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|e| format!("Channel error: {}", e))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -102,14 +188,14 @@ pub fn run() {
                 .on_tray_icon_event(|_tray, _event| {})
                 .build(app)?;
 
-            // Ensure window is hidden on startup
+            // Show window on startup for onboarding; frontend hides it if already completed
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
-                // Devtools disabled — opening them shifts the webview
-                // and causes capture region offsets.
-                // Uncomment temporarily if needed for debugging:
-                // #[cfg(debug_assertions)]
-                // window.open_devtools();
+                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(600.0, 480.0)));
+                let _ = window.center();
+                let _ = window.show();
+                let _ = window.set_focus();
+                #[cfg(debug_assertions)]
+                window.open_devtools();
             }
 
             // Register global shortcut
@@ -147,7 +233,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image])
+        .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image, check_permissions, open_permission_settings, request_microphone_access, request_speech_recognition, start_recording, stop_recording])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

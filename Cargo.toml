@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "crates/visionpipe-core",
+    "crates/vp-cli",
+    "crates/visionpipe-mcp",
+    "src-tauri",
+]
+resolver = "2"
