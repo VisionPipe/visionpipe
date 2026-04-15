@@ -4,6 +4,37 @@ This document tracks progress on the `implement-credit-calculation` branch of Vi
 
 ---
 
+## Progress Update as of 2026-04-15 01:00 UTC
+
+### Summary of changes since last update
+
+Completed full credit system implementation: Tauri commands with store persistence (Task 3), frontend integration with balance display, cost preview, and insufficient credits guard (Task 4), and verification (Task 5). All 10 unit tests pass, app builds successfully.
+
+### Detail of changes made:
+
+- **`src-tauri/src/credits.rs`**: Added `load_balance()` and `save_balance()` persistence helpers using `tauri_plugin_store::StoreExt`. Store file: `visionpipe.json`, key: `credit_balance`. Default balance: 0 for new installs.
+- **`src-tauri/src/lib.rs`**: Added 4 new Tauri commands:
+  - `get_credit_balance`: Returns current balance from `Mutex<CreditLedger>` managed state
+  - `add_credits`: Adds credits and persists (for purchases/dev top-ups)
+  - `preview_capture_cost`: Pure calculation, no state mutation (for frontend cost preview)
+  - `deduct_credits`: Calculates cost, validates balance, deducts, persists, returns cost breakdown
+  - Initialized `tauri_plugin_store` plugin and `Mutex<CreditLedger>` managed state
+  - Loads persisted balance in `setup()` closure
+- **`src/App.tsx`**: Replaced session-only credit tracking with backend-backed system:
+  - `creditBalance` state loaded from backend on startup via `get_credit_balance`
+  - `captureCost` state updated via `preview_capture_cost` when in annotating mode
+  - `handleSubmit` calls `deduct_credits` before clipboard composition, returns early on insufficient credits
+  - Credits UI shows balance + cost breakdown (capture + annotation + voice = total)
+  - Submit button replaced with "Insufficient credits" message when balance < cost
+
+### Potential concerns to address:
+
+- **No frontend refresh on balance change from external source**: If credits are added via devtools or another window, the UI won't update until next `handleSubmit` or app restart. Could add a polling or event-based refresh.
+- **No purchase flow**: The `add_credits` command exists but there's no UI for purchasing credits.
+- **E2E testing requires manual verification**: The smoke test (Task 5) verifies compilation and unit tests pass, but the full capture-deduct flow needs to be tested interactively via `pnpm tauri dev`.
+
+---
+
 ## Progress Update as of 2026-04-15 00:15 UTC
 
 ### Summary of changes since last update
