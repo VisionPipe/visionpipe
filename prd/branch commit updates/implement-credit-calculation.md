@@ -4,6 +4,22 @@ This document tracks progress on the `implement-credit-calculation` branch of Vi
 
 ---
 
+## Progress Update as of 2026-04-15 04:40 UTC
+
+### Summary of changes since last update
+
+Fixed `tauri-plugin-store` configuration that caused a runtime panic on app launch.
+
+### Detail of changes made:
+
+- **`src-tauri/tauri.conf.json`**: Changed `"plugins": { "store": {} }` back to `"plugins": {}`. The store plugin expects a unit type (no config entry), not an empty map — same pattern as the `global-shortcut` plugin issue from the `initial-build-out` branch. With `"store": {}`, Tauri's config deserializer threw: `"invalid type: map, expected unit"`.
+
+### Potential concerns to address:
+
+- A file watcher or linter may be reverting this change back to `"store": {}`. If the app crashes again on launch with the same error, check if something is reformatting `tauri.conf.json`.
+
+---
+
 ## Progress Update as of 2026-04-15 01:00 UTC
 
 ### Summary of changes since last update

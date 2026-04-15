@@ -40,7 +40,5 @@
       "icons/icon.png"
     ]
   },
-  "plugins": {
-    "store": {}
-  }
+  "plugins": {}
 }
