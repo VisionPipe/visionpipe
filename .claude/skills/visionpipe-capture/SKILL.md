@@ -21,11 +21,13 @@ description: "Use when the user asks about what's on their screen, wants a scree
 
 ## Workflow
 
-1. If the user mentions a specific app, call `list_windows` first to verify it's visible and get the correct name
-2. Call `capture_screenshot` with the `app_name` parameter if specified, or without it for fullscreen
-3. Read the returned PNG file path with the Read tool (Claude Code can view images natively)
-4. Read the metadata JSON for additional context (active app, URL, resolution, etc.)
-5. Analyze and respond based on what you see and the metadata
+1. **Always list windows first** — call `list_windows` or `vp list` to see what's available
+2. **If the user already specified an app**, verify it's in the list and capture it directly
+3. **If the user did NOT specify an app**, present the list of available windows and ask which one they'd like captured (also offer "fullscreen" as an option). Wait for their response before capturing.
+4. Capture the selected window with `capture_screenshot` (passing `app_name`) or fullscreen
+5. Read the returned PNG file path with the Read tool (Claude Code can view images natively)
+6. Read the metadata JSON for additional context (active app, URL, resolution, etc.)
+7. Analyze and respond based on what you see and the metadata
 
 ## Fallback (if MCP server is unavailable)
 
