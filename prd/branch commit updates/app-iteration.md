@@ -4,6 +4,30 @@ This document tracks progress on the `app-iteration` branch of VisionPipe. It is
 
 ---
 
+## Progress Update as of 2026-04-14 13:30 PT
+
+### Summary of changes since last update
+
+Integrated the backend credit system into the React frontend: replaced the session-only credit counter with backend-backed balance loading, live cost preview, credit deduction on submit, and an insufficient-credits blocker on the send button.
+
+### Detail of changes made:
+
+- **Modified `src/App.tsx`**:
+  - Replaced `sessionCredits` state with `creditBalance` (number | null) and `captureCost` (object with capture/annotation/voice/total breakdown, or null).
+  - Removed computed `captureCredits` variable (was `1 + (transcript ? 2 : 0)`).
+  - Added `useEffect` to load credit balance from backend via `invoke("get_credit_balance")` on startup.
+  - Added `useEffect` to preview capture cost via `invoke("preview_capture_cost")` whenever mode, metadata, annotation, drawnShapes, or transcript change. Only fires when in "annotating" mode with metadata present.
+  - Updated `handleSubmit` to call `invoke("deduct_credits")` before proceeding with the capture workflow. On failure, the submit is aborted. On success, balance is refreshed via `get_credit_balance`.
+  - Removed `setSessionCredits` call and `captureCredits` from the `handleSubmit` dependency array.
+  - Replaced credits UI: now shows "balance" with live credit count from backend, plus a cost breakdown (capture + annotation + voice = total) when `captureCost` is available.
+  - Submit button is conditionally replaced with an "Insufficient credits" message when `creditBalance < captureCost.total`.
+
+### Potential concerns to address:
+
+- **No error UI for credit deduction failure**: If `deduct_credits` fails, the submit silently aborts with a console error. A user-facing error message would improve UX.
+- **Cost preview fires on every keystroke in annotation**: The `useEffect` depends on `annotation` which changes on each keystroke. The backend call is lightweight but could be debounced for efficiency.
+- **Balance loading is fire-and-forget**: If `get_credit_balance` fails on startup, `creditBalance` stays null and the UI shows "..." indefinitely with no retry.
+
 ## Progress Update as of 2026-04-14 13:15 PT
 
 ### Summary of changes since last update

@@ -153,7 +153,8 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const [sessionCredits, setSessionCredits] = useState(0);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [captureCost, setCaptureCost] = useState<{ capture: number; annotation: number; voice: number; total: number } | null>(null);
   const [selection, setSelection] = useState<SelectionRect | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [drawnShapes, setDrawnShapes] = useState<DrawnShape[]>([]);
@@ -171,14 +172,33 @@ function App() {
     microphone: false,
   });
 
-  const captureCredits = 1 + (transcript ? 2 : 0);
-
   // Hide window on startup if onboarding already done
   useEffect(() => {
     if (!needsOnboarding) {
       getCurrentWindow().hide();
     }
   }, []);
+
+  // Load credit balance from backend
+  useEffect(() => {
+    invoke<number>("get_credit_balance").then(setCreditBalance).catch(console.error);
+  }, []);
+
+  // Preview capture cost whenever capture dimensions or features change
+  useEffect(() => {
+    if (mode !== "annotating" || !metadata) {
+      setCaptureCost(null);
+      return;
+    }
+    const w = metadata.captureWidth || 800;
+    const h = metadata.captureHeight || 600;
+    const hasAnnotation = annotation.trim().length > 0 || drawnShapes.length > 0;
+    const hasVoice = transcript.trim().length > 0;
+    invoke<{ capture: number; annotation: number; voice: number; total: number }>(
+      "preview_capture_cost",
+      { width: w, height: h, hasAnnotation, hasVoice }
+    ).then(setCaptureCost).catch(console.error);
+  }, [mode, metadata, annotation, drawnShapes.length, transcript]);
 
   // Poll permissions during onboarding
   useEffect(() => {
@@ -556,6 +576,20 @@ function App() {
   const handleSubmit = useCallback(async () => {
     if (!metadata) return;
 
+    // Deduct credits before proceeding
+    const w = metadata.captureWidth || 800;
+    const h = metadata.captureHeight || 600;
+    const hasAnnotation = annotation.trim().length > 0 || drawnShapes.length > 0;
+    const hasVoice = transcript.trim().length > 0;
+    try {
+      await invoke("deduct_credits", { width: w, height: h, hasAnnotation, hasVoice });
+      const newBalance = await invoke<number>("get_credit_balance");
+      setCreditBalance(newBalance);
+    } catch (err) {
+      console.error("[VisionPipe] Credit deduction failed:", err);
+      return;
+    }
+
     // Build the composite image: screenshot + annotation + metadata in one PNG
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d")!;
@@ -778,9 +812,8 @@ function App() {
       await writeText(lines.join("\n"));
     }
 
-    setSessionCredits((c) => c + captureCredits);
     resetAndHide();
-  }, [annotation, transcript, metadata, captureCredits, croppedScreenshot, drawnShapes, drawShapeOnCtx]);
+  }, [annotation, transcript, metadata, croppedScreenshot, drawnShapes, drawShapeOnCtx]);
 
   const resetAndHide = useCallback(async () => {
     setAnnotation("");
@@ -1410,37 +1443,55 @@ function App() {
           {/* Credits */}
           <div style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
-            marginBottom: 8, padding: "6px 10px",
+            marginBottom: 4, padding: "6px 10px",
             background: C.forest, borderRadius: 8,
             fontFamily: "'Source Code Pro', monospace",
           }}>
-            <span style={{ fontSize: 10, color: C.textDim }}>this_capture</span>
-            <span style={{ fontSize: 11, color: C.amber, fontWeight: 600 }}>{captureCredits} credits</span>
+            <span style={{ fontSize: 10, color: C.textDim }}>balance</span>
+            <span style={{ fontSize: 11, color: C.teal, fontWeight: 600 }}>
+              {creditBalance !== null ? creditBalance : "..."} credits
+            </span>
           </div>
-          <div style={{
-            textAlign: "center", fontSize: 10, color: C.textDim, marginBottom: 10,
-            fontFamily: "'Source Code Pro', monospace",
-          }}>
-            session_total <span style={{ color: C.teal }}>=</span> {sessionCredits + captureCredits}
-          </div>
+          {captureCost && (
+            <div style={{
+              padding: "4px 10px", marginBottom: 8,
+              fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.textDim,
+            }}>
+              <span>this_capture </span>
+              <span style={{ color: C.amber }}>{captureCost.capture}</span>
+              {captureCost.annotation > 0 && <span> + <span style={{ color: C.amber }}>{captureCost.annotation}</span> annot</span>}
+              {captureCost.voice > 0 && <span> + <span style={{ color: C.amber }}>{captureCost.voice}</span> voice</span>}
+              <span style={{ color: C.teal }}> = {captureCost.total}</span>
+            </div>
+          )}
 
           {/* Send Button */}
-          <button
-            onClick={handleSubmit}
-            style={{
-              width: "100%", padding: "10px 0", background: C.teal,
-              border: "none", borderRadius: 10, color: C.cream,
-              fontSize: 13, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif",
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              letterSpacing: "0.02em",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = "#35a08c"}
-            onMouseLeave={(e) => e.currentTarget.style.background = C.teal}
-          >
-            <span>Copy to Clipboard</span>
-            <span style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 11, opacity: 0.7 }}>|</span>
-            <span style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 11, opacity: 0.7 }}>pbcopy</span>
-          </button>
+          {creditBalance !== null && captureCost && creditBalance < captureCost.total ? (
+            <div style={{
+              width: "100%", padding: "10px 0", textAlign: "center",
+              background: C.forest, borderRadius: 10, color: C.sienna,
+              fontSize: 12, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif",
+            }}>
+              Insufficient credits — purchase more to continue.
+            </div>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              style={{
+                width: "100%", padding: "10px 0", background: C.teal,
+                border: "none", borderRadius: 10, color: C.cream,
+                fontSize: 13, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                letterSpacing: "0.02em",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "#35a08c"}
+              onMouseLeave={(e) => e.currentTarget.style.background = C.teal}
+            >
+              <span>Copy to Clipboard</span>
+              <span style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 11, opacity: 0.7 }}>|</span>
+              <span style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 11, opacity: 0.7 }}>pbcopy</span>
+            </button>
+          )}
 
           {/* Keyboard Hint */}
           <div style={{
