@@ -6,6 +6,7 @@ use tauri::{
 
 mod audio;
 mod speech;
+mod credits;
 
 use visionpipe_core::capture;
 use visionpipe_core::metadata;
