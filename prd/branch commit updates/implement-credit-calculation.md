@@ -4,6 +4,23 @@ This document tracks progress on the `implement-credit-calculation` branch of Vi
 
 ---
 
+## Progress Update as of 2026-04-15 05:00 UTC
+
+### Summary of changes since last update
+
+Added design spec for in-app credit purchase system using device ID + Stripe Checkout + Next.js API routes.
+
+### Detail of changes made:
+
+- **`docs/superpowers/specs/2026-04-15-in-app-credit-purchase-design.md`** (new): Full design spec covering device ID-based identity (no auth), Vercel Postgres database schema, 5 API routes (register, balance, checkout, webhook, deduct), local-first deduction with server sync, and purchase UI flow. Work spans two repos: `visionpipe` (desktop app) and `visionpipe-web` (Next.js API).
+
+### Potential concerns to address:
+
+- Spec covers two repos — implementation plan needs to clearly separate what goes where.
+- Stripe webhook endpoint URL is `api.visionpipe.ai` but the Next.js app may be at a different domain. DNS/proxy config needed.
+
+---
+
 ## Progress Update as of 2026-04-15 04:40 UTC
 
 ### Summary of changes since last update
