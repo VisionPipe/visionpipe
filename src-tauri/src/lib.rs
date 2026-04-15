@@ -1,3 +1,4 @@
+use std::sync::Mutex;
 use tauri::{
     tray::TrayIconBuilder,
     Emitter,
@@ -175,6 +176,40 @@ async fn stop_recording() -> Result<String, String> {
         .map_err(|e| format!("Channel error: {}", e))?
 }
 
+#[tauri::command]
+fn get_credit_balance(state: tauri::State<Mutex<credits::CreditLedger>>) -> u64 {
+    state.lock().unwrap().balance
+}
+
+#[tauri::command]
+fn add_credits(amount: u64, state: tauri::State<Mutex<credits::CreditLedger>>, app: tauri::AppHandle) -> u64 {
+    let mut ledger = state.lock().unwrap();
+    ledger.balance += amount;
+    credits::save_balance(&app, ledger.balance);
+    ledger.balance
+}
+
+#[tauri::command]
+fn preview_capture_cost(width: u32, height: u32, has_annotation: bool, has_voice: bool) -> credits::CreditCost {
+    credits::calculate_cost(&credits::CaptureJob { width, height, has_annotation, has_voice })
+}
+
+#[tauri::command]
+fn deduct_credits(
+    width: u32,
+    height: u32,
+    has_annotation: bool,
+    has_voice: bool,
+    state: tauri::State<Mutex<credits::CreditLedger>>,
+    app: tauri::AppHandle,
+) -> Result<credits::CreditCost, String> {
+    let cost = credits::calculate_cost(&credits::CaptureJob { width, height, has_annotation, has_voice });
+    let mut ledger = state.lock().unwrap();
+    ledger.deduct(&cost).map_err(|e| e.to_string())?;
+    credits::save_balance(&app, ledger.balance);
+    Ok(cost)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -182,6 +217,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .manage(Mutex::new(credits::CreditLedger::new(0)))
         .setup(|app| {
             // Create system tray
             let _tray = TrayIconBuilder::new()
@@ -232,9 +269,21 @@ pub fn run() {
                 }
             })?;
 
+            // Load persisted credit balance
+            {
+                let balance = credits::load_balance(&app.handle());
+                let state: tauri::State<Mutex<credits::CreditLedger>> = app.state();
+                state.lock().unwrap().balance = balance;
+            }
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image, check_permissions, open_permission_settings, request_microphone_access, request_speech_recognition, start_recording, stop_recording])
+        .invoke_handler(tauri::generate_handler![
+            take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image,
+            check_permissions, open_permission_settings, request_microphone_access,
+            request_speech_recognition, start_recording, stop_recording,
+            get_credit_balance, add_credits, preview_capture_cost, deduct_credits
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

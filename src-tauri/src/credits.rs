@@ -61,6 +61,26 @@ impl CreditLedger {
     }
 }
 
+use tauri_plugin_store::StoreExt;
+
+const STORE_FILE: &str = "visionpipe.json";
+const BALANCE_KEY: &str = "credit_balance";
+
+/// Load credit balance from the store, defaulting to 0 for new installs.
+pub fn load_balance(app: &tauri::AppHandle) -> u64 {
+    let store = app.store(STORE_FILE).expect("failed to open store");
+    store
+        .get(BALANCE_KEY)
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+/// Persist credit balance to the store.
+pub fn save_balance(app: &tauri::AppHandle, balance: u64) {
+    let store = app.store(STORE_FILE).expect("failed to open store");
+    store.set(BALANCE_KEY, serde_json::json!(balance));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

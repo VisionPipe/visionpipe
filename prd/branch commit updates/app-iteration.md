@@ -4,6 +4,32 @@ This document tracks progress on the `app-iteration` branch of VisionPipe. It is
 
 ---
 
+## Progress Update as of 2026-04-14 13:15 PT
+
+### Summary of changes since last update
+
+Wired the credit system into Tauri by adding 4 new commands (get_credit_balance, add_credits, preview_capture_cost, deduct_credits), persistence helpers using tauri-plugin-store, and managed state initialization.
+
+### Detail of changes made:
+
+- **Modified `src-tauri/src/credits.rs`**: Added `load_balance()` and `save_balance()` persistence helpers using `tauri_plugin_store::StoreExt`. These read/write the `credit_balance` key in `visionpipe.json` store file. Placed before the `#[cfg(test)]` block so existing tests remain unaffected.
+- **Modified `src-tauri/src/lib.rs`**:
+  - Added `use std::sync::Mutex;` for thread-safe state management.
+  - Added 4 new Tauri commands: `get_credit_balance` (read-only), `add_credits` (adds credits and persists), `preview_capture_cost` (stateless cost preview), `deduct_credits` (deducts with insufficient-credit error handling and persistence).
+  - Registered `tauri_plugin_store` plugin in the builder chain.
+  - Added `.manage(Mutex::new(credits::CreditLedger::new(0)))` for managed state.
+  - Added balance loading from store in the `setup` closure, after global shortcut registration.
+  - Updated `invoke_handler` to include all 4 new commands.
+- All 10 existing credit tests still pass. Compilation succeeds cleanly.
+
+### Potential concerns to address:
+
+- **No frontend integration yet**: The commands are registered but not called from the React frontend. Task 4 will add the UI components.
+- **Store file location**: `visionpipe.json` is created by tauri-plugin-store in the app's data directory. On macOS this is typically `~/Library/Application Support/com.visionpipe.app/`.
+- **Mutex contention**: Using `std::sync::Mutex` (not `tokio::sync::Mutex`) since the credit commands are synchronous (not async). This is appropriate for the current usage pattern but could become a concern if credit operations become long-running.
+
+---
+
 ## Progress Update as of 2026-04-14 12:45 PT
 
 ### Summary of changes since last update
