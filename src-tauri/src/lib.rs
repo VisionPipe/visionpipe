@@ -13,6 +13,7 @@ mod metadata;
 mod permissions;
 mod session;
 mod speech;
+mod credits;
 
 /// Shared state mapping tray-menu ID `session_<N>` → session folder path on
 /// disk. Updated whenever we rebuild the tray menu (on launch + after each

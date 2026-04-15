@@ -4,6 +4,26 @@ This document tracks progress on the `app-iteration` branch of VisionPipe. It is
 
 ---
 
+## Progress Update as of 2026-04-14 12:45 PT
+
+### Summary of changes since last update
+
+Added credit calculation module with pure Rust logic for computing capture costs based on pixel area, annotation, and voice surcharges, plus a ledger deduction mechanism. Includes 10 comprehensive unit tests.
+
+### Detail of changes made:
+
+- **New file `src-tauri/src/credits.rs`**: Core credit system with `CreditLedger`, `CaptureJob`, `CreditCost`, and `InsufficientCredits` structs. The `calculate_cost()` function computes credits as ceiling(pixels / 1,000,000) plus optional +1 surcharges for annotation and voice. `CreditLedger::deduct()` handles balance checking with proper error reporting.
+- **Modified `src-tauri/src/lib.rs`**: Added `mod credits;` declaration after `mod speech;` to register the new module.
+- **10 unit tests** covering: 1080p (3 credits), small region (1 credit), 4K (9 credits), 1440p (4 credits), annotation surcharge, voice surcharge, both surcharges, successful deduction, insufficient balance rejection, and exact balance deduction.
+- This is Task 1 of the credit system implementation — pure logic only, no persistence or Tauri commands yet.
+
+### Potential concerns to address:
+
+- **No persistence yet**: Credits are in-memory only. Tasks 2-3 will add tauri-plugin-store for disk persistence.
+- **Symlink workaround**: Had to create `/Users/drodio/visionpipe` -> `/Users/drodio/projects/visionpipe` symlink because the Tauri build script cached an old target path. This is a local dev environment issue, not a code issue.
+
+---
+
 ## Progress Update as of 2026-04-14 12:15 PT
 
 ### Summary of changes since last update
