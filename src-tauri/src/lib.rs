@@ -66,13 +66,13 @@ async fn check_permissions() -> Result<std::collections::HashMap<String, bool>, 
 /// Request microphone access via native API (shows system prompt from VisionPipe).
 #[tauri::command]
 async fn request_microphone_access() -> Result<bool, String> {
-    Ok(speech::request_mic_auth())
+    speech::request_mic_auth()
 }
 
 /// Request speech recognition access via native API (shows system prompt from VisionPipe).
 #[tauri::command]
 async fn request_speech_recognition() -> Result<bool, String> {
-    Ok(speech::request_speech_auth())
+    speech::request_speech_auth()
 }
 
 /// Open macOS System Settings to the appropriate permission pane.
@@ -84,6 +84,7 @@ async fn open_permission_settings(permission: String) -> Result<(), String> {
         "screen_recording" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
         "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        "speech_recognition" => "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
         _ => return Err(format!("Unknown permission: {}", permission)),
     };
 
@@ -195,19 +196,55 @@ fn preview_capture_cost(width: u32, height: u32, has_annotation: bool, has_voice
 }
 
 #[tauri::command]
-fn deduct_credits(
+async fn deduct_credits(
     width: u32,
     height: u32,
     has_annotation: bool,
     has_voice: bool,
-    state: tauri::State<Mutex<credits::CreditLedger>>,
+    state: tauri::State<'_, Mutex<credits::CreditLedger>>,
     app: tauri::AppHandle,
 ) -> Result<credits::CreditCost, String> {
     let cost = credits::calculate_cost(&credits::CaptureJob { width, height, has_annotation, has_voice });
-    let mut ledger = state.lock().unwrap();
-    ledger.deduct(&cost).map_err(|e| e.to_string())?;
-    credits::save_balance(&app, ledger.balance);
+    {
+        let mut ledger = state.lock().unwrap();
+        ledger.deduct(&cost).map_err(|e| e.to_string())?;
+        credits::save_balance(&app, ledger.balance);
+    }
+
+    // Sync deduction to server in background
+    let device_id = credits::get_or_create_device_id(&app);
+    let total = cost.total;
+    tokio::spawn(async move {
+        if let Err(e) = credits::sync_deduction(&device_id, total).await {
+            eprintln!("[VisionPipe] Background deduction sync failed: {e}");
+        }
+    });
+
     Ok(cost)
+}
+
+#[tauri::command]
+fn get_device_id(app: tauri::AppHandle) -> String {
+    credits::get_or_create_device_id(&app)
+}
+
+#[tauri::command]
+async fn sync_credits(app: tauri::AppHandle, ledger: tauri::State<'_, Mutex<credits::CreditLedger>>) -> Result<u64, String> {
+    let device_id = credits::get_or_create_device_id(&app);
+    let balance = credits::fetch_balance(&device_id).await.unwrap_or_else(|_| {
+        let l = ledger.lock().unwrap();
+        l.balance
+    });
+    let mut l = ledger.lock().unwrap();
+    l.balance = balance;
+    credits::save_balance(&app, balance);
+    Ok(balance)
+}
+
+#[tauri::command]
+async fn start_checkout(app: tauri::AppHandle, pack_id: String) -> Result<String, String> {
+    let device_id = credits::get_or_create_device_id(&app);
+    credits::create_checkout(&device_id, &pack_id).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -218,7 +255,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .manage(Mutex::new(credits::CreditLedger::new(0)))
+        .manage(Mutex::new(credits::CreditLedger::new(1_000_000)))
         .setup(|app| {
             // Create system tray
             let _tray = TrayIconBuilder::new()
@@ -269,11 +306,30 @@ pub fn run() {
                 }
             })?;
 
-            // Load persisted credit balance
+            // Load persisted credit balance as initial value
             {
                 let balance = credits::load_balance(&app.handle());
                 let state: tauri::State<Mutex<credits::CreditLedger>> = app.state();
                 state.lock().unwrap().balance = balance;
+            }
+
+            // Register device and sync balance from server in background
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let device_id = credits::get_or_create_device_id(&app_handle);
+                    match credits::register_device(&device_id).await {
+                        Ok(server_balance) => {
+                            if let Some(state) = app_handle.try_state::<Mutex<credits::CreditLedger>>() {
+                                let mut ledger = state.lock().unwrap();
+                                ledger.balance = server_balance;
+                                credits::save_balance(&app_handle, server_balance);
+                            }
+                            eprintln!("[VisionPipe] Registered device, server balance: {server_balance}");
+                        }
+                        Err(e) => eprintln!("[VisionPipe] Device registration failed (offline?): {e}"),
+                    }
+                });
             }
 
             Ok(())
@@ -282,7 +338,8 @@ pub fn run() {
             take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image,
             check_permissions, open_permission_settings, request_microphone_access,
             request_speech_recognition, start_recording, stop_recording,
-            get_credit_balance, add_credits, preview_capture_cost, deduct_credits
+            get_credit_balance, add_credits, preview_capture_cost, deduct_credits,
+            get_device_id, sync_credits, start_checkout
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

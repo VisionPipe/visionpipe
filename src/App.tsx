@@ -171,6 +171,8 @@ function App() {
     accessibility: false,
     microphone: false,
   });
+  const [showPacks, setShowPacks] = useState(false);
+  const [checkoutPolling, setCheckoutPolling] = useState(false);
 
   // Hide window on startup if onboarding already done
   useEffect(() => {
@@ -179,9 +181,13 @@ function App() {
     }
   }, []);
 
-  // Load credit balance from backend
+  // Sync credit balance from server on launch, fall back to local
   useEffect(() => {
-    invoke<number>("get_credit_balance").then(setCreditBalance).catch(console.error);
+    invoke<number>("sync_credits")
+      .then(setCreditBalance)
+      .catch(() => {
+        invoke<number>("get_credit_balance").then(setCreditBalance).catch(console.error);
+      });
   }, []);
 
   // Preview capture cost whenever capture dimensions or features change
@@ -199,6 +205,36 @@ function App() {
       { width: w, height: h, hasAnnotation, hasVoice }
     ).then(setCaptureCost).catch(console.error);
   }, [mode, metadata, annotation, drawnShapes.length, transcript]);
+
+  // Poll for balance updates after checkout
+  useEffect(() => {
+    if (!checkoutPolling) return;
+    const startBalance = creditBalance;
+    const interval = setInterval(async () => {
+      try {
+        const balance = await invoke<number>("sync_credits");
+        setCreditBalance(balance);
+        if (startBalance !== null && balance > startBalance) {
+          setCheckoutPolling(false);
+        }
+      } catch { /* ignore */ }
+    }, 3000);
+    const timeout = setTimeout(() => setCheckoutPolling(false), 120000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [checkoutPolling]);
+
+  const handleBuyCredits = async (packId: string) => {
+    try {
+      const url = await invoke<string>("start_checkout", { packId });
+      setShowPacks(false);
+      setCheckoutPolling(true);
+      // Open checkout URL in system browser
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+    } catch (err) {
+      console.error("[VisionPipe] Checkout failed:", err);
+    }
+  };
 
   // Poll permissions during onboarding
   useEffect(() => {
@@ -852,6 +888,7 @@ function App() {
   }, [resetAndHide, handleSubmit, captureFullScreen, mode]);
 
   const toggleRecording = async () => {
+    console.log("[VisionPipe] toggleRecording called, isRecording:", isRecording);
     if (isRecording) {
       // Stop recording and transcribe
       setIsRecording(false);
@@ -859,22 +896,28 @@ function App() {
       try {
         const text = await invoke<string>("stop_recording");
         setTranscript(text);
-      } catch (err) {
-        console.error("Transcription failed:", err);
-        setTranscript(`(transcription error: ${err})`);
+      } catch (err: any) {
+        const msg = String(err);
+        console.error("Transcription failed:", msg);
+        if (msg.includes("not authorized") || msg.includes("Speech Recognition")) {
+          setTranscript("Speech Recognition not enabled. Opening System Settings — please enable it, then try again.");
+          await invoke("open_permission_settings", { permission: "speech_recognition" });
+        } else {
+          setTranscript(`(transcription error: ${msg})`);
+        }
       } finally {
         setIsTranscribing(false);
       }
     } else {
-      // Start recording — ensure speech recognition is authorized first
+      // Start recording — speech auth is checked at transcription time, not here
       setTranscript("");
       try {
-        await invoke<boolean>("request_speech_recognition");
         await invoke("start_recording");
         setIsRecording(true);
-      } catch (err) {
-        console.error("Recording failed:", err);
-        setTranscript(`(recording error: ${err})`);
+      } catch (err: any) {
+        const msg = String(err);
+        console.error("Recording failed:", msg);
+        setTranscript(`(recording error: ${msg})`);
       }
     }
   };
@@ -1339,37 +1382,6 @@ function App() {
             </div>
           </div>
 
-          {/* Metadata Block */}
-          {metadata && (
-            <div style={{
-              fontFamily: "'Source Code Pro', monospace", fontSize: 9, color: C.textMuted,
-              marginBottom: 14, lineHeight: 1.7,
-              background: C.forest, borderRadius: 8, padding: "8px 10px",
-              border: `1px solid ${C.border}`,
-              maxHeight: 120, overflowY: "auto",
-            }}>
-              <div><span style={{ color: C.textDim }}>app</span> <span style={{ color: C.teal }}>=</span> {metadata.app}</div>
-              <div><span style={{ color: C.textDim }}>win</span> <span style={{ color: C.teal }}>=</span> {metadata.window}</div>
-              <div><span style={{ color: C.textDim }}>os</span>&nbsp; <span style={{ color: C.teal }}>=</span> {metadata.os} ({metadata.osBuild})</div>
-              <div><span style={{ color: C.textDim }}>res</span> <span style={{ color: C.teal }}>=</span> {metadata.resolution} @ {metadata.scale}</div>
-              <div><span style={{ color: C.textDim }}>cpu</span> <span style={{ color: C.teal }}>=</span> {metadata.cpu}</div>
-              <div><span style={{ color: C.textDim }}>mem</span> <span style={{ color: C.teal }}>=</span> {metadata.memoryGb}</div>
-              <div><span style={{ color: C.textDim }}>usr</span> <span style={{ color: C.teal }}>=</span> {metadata.username}@{metadata.hostname}</div>
-              <div><span style={{ color: C.textDim }}>bat</span> <span style={{ color: C.teal }}>=</span> {metadata.battery}</div>
-              {metadata.activeUrl && (
-                <div><span style={{ color: C.textDim }}>url</span> <span style={{ color: C.teal }}>=</span> {metadata.activeUrl}</div>
-              )}
-            </div>
-          )}
-
-          {/* Context Label */}
-          <div style={{
-            fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.textDim,
-            marginBottom: 6, display: "flex", alignItems: "center", gap: 4,
-          }}>
-            <span style={{ color: C.teal }}>&gt;</span> context
-          </div>
-
           {/* Text Annotation */}
           <textarea
             ref={textareaRef}
@@ -1393,25 +1405,30 @@ function App() {
             style={{
               display: "flex", alignItems: "center", gap: 8,
               marginTop: 10, padding: "8px 10px", borderRadius: 10,
-              border: `1px solid ${isRecording ? "rgba(192,70,42,0.3)" : C.border}`,
-              background: isRecording ? "rgba(192,70,42,0.08)" : C.forest,
+              border: `1px solid ${isRecording ? "#c0462a" : C.border}`,
+              background: isRecording ? "rgba(192,70,42,0.2)" : C.forest,
               cursor: "pointer", width: "100%", boxSizing: "border-box",
             }}
           >
             <div style={{
               width: 28, height: 28, borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              background: isRecording ? "rgba(192,70,42,0.15)" : "rgba(46,139,122,0.12)",
+              background: isRecording ? "#c0462a" : "rgba(46,139,122,0.12)",
+              animation: isRecording ? "pulse 1.5s infinite" : "none",
             }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isRecording ? C.sienna : C.teal} strokeWidth="2">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
+              {isRecording ? (
+                <div style={{ width: 10, height: 10, borderRadius: 2, background: "#fff" }} />
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.teal} strokeWidth="2">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+              )}
             </div>
-            <span style={{ fontSize: 12, color: C.textMuted }}>
-              {isRecording ? "Stop recording" : isTranscribing ? "Transcribing..." : "Record voice note"}
+            <span style={{ fontSize: 12, color: isRecording ? "#c0462a" : C.textMuted, fontWeight: isRecording ? 600 : 400 }}>
+              {isRecording ? "Recording... tap to stop" : isTranscribing ? "Transcribing..." : "Record voice note"}
             </span>
           </button>
 
@@ -1454,7 +1471,7 @@ function App() {
           </div>
           {captureCost && (
             <div style={{
-              padding: "4px 10px", marginBottom: 8,
+              padding: "4px 10px", marginBottom: 4,
               fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.textDim,
             }}>
               <span>this_capture </span>
@@ -1464,15 +1481,65 @@ function App() {
               <span style={{ color: C.teal }}> = {captureCost.total}</span>
             </div>
           )}
+          {checkoutPolling && (
+            <div style={{
+              padding: "4px 10px", marginBottom: 4,
+              fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.teal,
+              fontStyle: "italic",
+            }}>
+              Waiting for payment...
+            </div>
+          )}
+          <button
+            onClick={() => setShowPacks(!showPacks)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              fontFamily: "'Source Code Pro', monospace", fontSize: 10,
+              color: C.teal, padding: "2px 10px", marginBottom: 4,
+              textDecoration: "underline", textUnderlineOffset: 2,
+            }}
+          >
+            {showPacks ? "hide packs" : "buy credits"}
+          </button>
+          {showPacks && (
+            <div style={{ padding: "4px 10px", marginBottom: 8 }}>
+              {[
+                { id: "starter", name: "Starter", credits: "999", price: "$9.99" },
+                { id: "pro", name: "Pro", credits: "2,999", price: "$29.99" },
+                { id: "business", name: "Business", credits: "9,999", price: "$99.99" },
+              ].map((pack) => (
+                <button
+                  key={pack.id}
+                  onClick={() => handleBuyCredits(pack.id)}
+                  style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    width: "100%", padding: "6px 8px", marginBottom: 4,
+                    background: C.forest, border: `1px solid ${C.border}`, borderRadius: 6,
+                    cursor: "pointer", color: C.cream, fontSize: 11,
+                    fontFamily: "'Source Code Pro', monospace",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.borderColor = C.teal}
+                  onMouseLeave={(e) => e.currentTarget.style.borderColor = C.border}
+                >
+                  <span>{pack.name} <span style={{ color: C.textDim }}>({pack.credits})</span></span>
+                  <span style={{ color: C.amber }}>{pack.price}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Send Button */}
           {creditBalance !== null && captureCost && creditBalance < captureCost.total ? (
-            <div style={{
-              width: "100%", padding: "10px 0", textAlign: "center",
-              background: C.forest, borderRadius: 10, color: C.sienna,
-              fontSize: 12, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif",
-            }}>
-              Insufficient credits — purchase more to continue.
+            <div
+              onClick={() => setShowPacks(true)}
+              style={{
+                width: "100%", padding: "10px 0", textAlign: "center",
+                background: C.forest, borderRadius: 10, color: C.sienna,
+                fontSize: 12, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif",
+                cursor: "pointer",
+              }}
+            >
+              Insufficient credits — click to purchase.
             </div>
           ) : (
             <button

@@ -4,6 +4,28 @@ This document tracks progress on the `implement-credit-calculation` branch of Vi
 
 ---
 
+## Progress Update as of 2026-04-21 12:30 UTC
+
+### Summary of changes since last update
+Multiple fixes and improvements: TCC crash guard for dev mode (speech/mic auth outside .app bundle), speech recognition permission flow improvements, default credit balance for testing, device registration and server sync infrastructure, credit purchase UI with Stripe checkout flow, UI cleanup (removed metadata block and context label), and improved voice recording button visual feedback.
+
+### Detail of changes made:
+- `src-tauri/src/speech_bridge.m`: Added `is_running_in_app_bundle()` guard function. Both `speech_request_auth()` and `mic_request_auth()` now check for .app bundle context before calling TCC APIs, returning `-1` sentinel when outside a bundle instead of crashing the process.
+- `src-tauri/src/speech.rs`: Changed `request_speech_auth()` and `request_mic_auth()` return types from `bool` to `Result<bool, String>`. Maps `-1` from ObjC to `Err(...)` with user-facing message directing to System Settings.
+- `src-tauri/src/lib.rs`: Updated `request_microphone_access` and `request_speech_recognition` command handlers to propagate `Result` instead of wrapping in `Ok()`. Added `speech_recognition` to `open_permission_settings` URL map. Changed `deduct_credits` to async with background server sync via `tokio::spawn`. Added new commands: `get_device_id`, `sync_credits`, `start_checkout`. Device registration on startup uses `tauri::async_runtime::spawn` (not `tokio::spawn`) to avoid "no reactor running" panic in `.setup()`. Default credit balance changed to 1,000,000 for testing.
+- `src-tauri/src/credits.rs`: Added `uuid` and `reqwest` dependencies. New functions: `get_or_create_device_id()`, `register_device()`, `fetch_balance()`, `create_checkout()`, `sync_deduction()` — all hitting `https://api.visionpipe.ai`. Default balance changed from 0 to 1,000,000 for testing.
+- `src-tauri/Cargo.toml`: Added `uuid`, `reqwest` (with rustls-tls), and `tokio` dependencies.
+- `src/App.tsx`: Removed metadata block (app/win/os/res/cpu/mem/usr/bat display) and `> context` header from sidebar. Removed `request_speech_recognition` pre-check from recording flow — speech auth now checked at transcription time only, with auto-open of System Settings on failure. Added credit purchase UI: "buy credits" link, pack selection (Starter/Pro/Business), checkout polling, "Waiting for payment..." indicator. Improved recording button: solid red circle with pulsing animation, white stop square icon, bold "Recording... tap to stop" text. Added `sync_credits` call on launch with fallback to local balance.
+
+### Potential concerns to address:
+- The `api.visionpipe.ai` backend does not exist yet — device registration will fail silently on every launch (handled gracefully with error log).
+- Default balance of 1,000,000 is for testing only — must be reverted before production.
+- Voice recording mic button click may not be registering in the UI — a debug `console.log` was added to `toggleRecording` but the root cause is still under investigation.
+- Several functions in `credits.rs` and `lib.rs` generate "never used" warnings (`register_device`, `fetch_balance`, `create_checkout`) — these are wired up but not yet called from all paths.
+- The `checkoutPolling` effect has a dependency on `creditBalance` via `startBalance` closure capture but `creditBalance` is not in the dependency array — may cause stale closure issues.
+
+---
+
 ## Progress Update as of 2026-04-15 05:00 UTC
 
 ### Summary of changes since last update

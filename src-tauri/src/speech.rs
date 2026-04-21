@@ -19,10 +19,18 @@ pub fn is_speech_authorized() -> bool {
 }
 
 /// Request speech recognition authorization. Blocks until user responds.
-pub fn request_speech_auth() -> bool {
+/// Returns Ok(true) if authorized, Ok(false) if denied, Err if cannot request
+/// (e.g., running outside a .app bundle in dev mode).
+pub fn request_speech_auth() -> Result<bool, String> {
     let result = unsafe { speech_request_auth() };
     eprintln!("[VisionPipe] Speech auth request result: {}", result);
-    result == 1
+    match result {
+        1 => Ok(true),
+        -1 => Err("Cannot request speech recognition permission outside a .app bundle. \
+                    Grant it manually in System Settings > Privacy & Security > Speech Recognition."
+            .into()),
+        _ => Ok(false),
+    }
 }
 
 /// Check if microphone is authorized.
@@ -31,10 +39,17 @@ pub fn is_mic_authorized() -> bool {
 }
 
 /// Request microphone authorization. Blocks until user responds.
-pub fn request_mic_auth() -> bool {
+/// Returns Ok(true) if authorized, Ok(false) if denied, Err if cannot request.
+pub fn request_mic_auth() -> Result<bool, String> {
     let result = unsafe { mic_request_auth() };
     eprintln!("[VisionPipe] Mic auth request result: {}", result);
-    result == 1
+    match result {
+        1 => Ok(true),
+        -1 => Err("Cannot request microphone permission outside a .app bundle. \
+                    Grant it manually in System Settings > Privacy & Security > Microphone."
+            .into()),
+        _ => Ok(false),
+    }
 }
 
 /// Transcribe a WAV file using the native SFSpeechRecognizer.

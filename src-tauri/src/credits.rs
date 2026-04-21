@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreditLedger {
@@ -65,6 +66,8 @@ use tauri_plugin_store::StoreExt;
 
 const STORE_FILE: &str = "visionpipe.json";
 const BALANCE_KEY: &str = "credit_balance";
+const DEVICE_ID_KEY: &str = "device_id";
+const API_BASE_URL: &str = "https://api.visionpipe.ai";
 
 /// Load credit balance from the store, defaulting to 0 for new installs.
 pub fn load_balance(app: &tauri::AppHandle) -> u64 {
@@ -72,13 +75,76 @@ pub fn load_balance(app: &tauri::AppHandle) -> u64 {
     store
         .get(BALANCE_KEY)
         .and_then(|v| v.as_u64())
-        .unwrap_or(0)
+        .unwrap_or(1_000_000)
 }
 
 /// Persist credit balance to the store.
 pub fn save_balance(app: &tauri::AppHandle, balance: u64) {
     let store = app.store(STORE_FILE).expect("failed to open store");
     store.set(BALANCE_KEY, serde_json::json!(balance));
+}
+
+/// Get or create a device ID. Generated once on first launch, persisted forever.
+pub fn get_or_create_device_id(app: &tauri::AppHandle) -> String {
+    let store = app.store(STORE_FILE).expect("failed to open store");
+    if let Some(id) = store.get(DEVICE_ID_KEY).and_then(|v| v.as_str().map(String::from)) {
+        return id;
+    }
+    let id = Uuid::new_v4().to_string();
+    store.set(DEVICE_ID_KEY, serde_json::json!(id));
+    id
+}
+
+/// Register device with the backend API. Idempotent -- safe to call on every launch.
+/// Returns the server-side balance.
+pub async fn register_device(device_id: &str) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{API_BASE_URL}/api/devices/register"))
+        .json(&serde_json::json!({ "deviceId": device_id }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body["balance"].as_u64().unwrap_or(0))
+}
+
+/// Fetch current balance from the server.
+pub async fn fetch_balance(device_id: &str) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{API_BASE_URL}/api/balance?deviceId={device_id}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body["balance"].as_u64().unwrap_or(0))
+}
+
+/// Request a Stripe Checkout URL from the backend.
+pub async fn create_checkout(device_id: &str, pack_id: &str) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{API_BASE_URL}/api/checkout"))
+        .json(&serde_json::json!({ "deviceId": device_id, "packId": pack_id }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    body["url"].as_str().map(String::from).ok_or("No checkout URL returned".into())
+}
+
+/// Sync a deduction to the server. Returns the server-side balance.
+pub async fn sync_deduction(device_id: &str, amount: u64) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{API_BASE_URL}/api/deduct"))
+        .json(&serde_json::json!({ "deviceId": device_id, "amount": amount }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body["balance"].as_u64().unwrap_or(0))
 }
 
 #[cfg(test)]

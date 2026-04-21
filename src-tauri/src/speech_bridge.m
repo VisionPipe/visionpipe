@@ -8,9 +8,29 @@ int speech_auth_status(void) {
     return (int)[SFSpeechRecognizer authorizationStatus];
 }
 
+// Check if running inside a .app bundle (required for TCC authorization prompts).
+static BOOL is_running_in_app_bundle(void) {
+    NSBundle *main = [NSBundle mainBundle];
+    NSString *path = [main bundlePath];
+    return [path hasSuffix:@".app"];
+}
+
 // Request speech recognition authorization. Blocks until the user responds.
-// Returns 1 if authorized, 0 otherwise.
+// Returns 1 if authorized, 0 otherwise, -1 if cannot request (no bundle).
 int speech_request_auth(void) {
+    // If already authorized, return immediately
+    if ([SFSpeechRecognizer authorizationStatus] == SFSpeechRecognizerAuthorizationStatusAuthorized) {
+        return 1;
+    }
+
+    // Outside a .app bundle, requestAuthorization will crash via TCC.
+    // Return -1 so the Rust side can show a helpful error.
+    if (!is_running_in_app_bundle()) {
+        NSLog(@"[VisionPipe] Cannot request speech auth outside .app bundle. "
+              @"Grant permission manually in System Settings > Privacy & Security > Speech Recognition.");
+        return -1;
+    }
+
     __block int result = 0;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
@@ -24,8 +44,19 @@ int speech_request_auth(void) {
 }
 
 // Request microphone access. Blocks until the user responds.
-// Returns 1 if authorized, 0 otherwise.
+// Returns 1 if authorized, 0 otherwise, -1 if cannot request (no bundle).
 int mic_request_auth(void) {
+    // If already authorized, return immediately
+    if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusAuthorized) {
+        return 1;
+    }
+
+    if (!is_running_in_app_bundle()) {
+        NSLog(@"[VisionPipe] Cannot request mic auth outside .app bundle. "
+              @"Grant permission manually in System Settings > Privacy & Security > Microphone.");
+        return -1;
+    }
+
     __block int result = 0;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
