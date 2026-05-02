@@ -4,6 +4,32 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 13:55 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Set up Apple Developer ID code signing + notarization end-to-end. VisionPipe now builds as a signed and notarized `.dmg` that passes Gatekeeper with `source=Notarized Developer ID`. Renamed the bundle identifier from `com.visionpipe.app` (warned by Tauri due to `.app` suffix conflict) to `com.visionpipe.desktop`. Added the macOS bundle config to `tauri.conf.json`, an `entitlements.plist` for the hardened runtime, and worked around Tauri's flaky notarization polling by manually creating + signing + notarizing the `.dmg` via `notarytool --wait`.
+
+### Detail of changes made:
+
+- **`src-tauri/tauri.conf.json`**: Renamed `identifier` from `com.visionpipe.app` → `com.visionpipe.desktop` (Tauri warned the old one conflicts with the `.app` extension). Added a `bundle` section with `macOS.providerShortName: "M7GJV3YJ26"`, `macOS.entitlements: "entitlements.plist"`, `macOS.hardenedRuntime: true`, `macOS.minimumSystemVersion: "10.13"`. The `signingIdentity` is intentionally left null in the config — Tauri reads it from the `APPLE_SIGNING_IDENTITY` env var at build time.
+- **`src-tauri/entitlements.plist`** (new): Hardened runtime entitlements. Includes `com.apple.security.cs.allow-jit` (WebView JS engine), `com.apple.security.cs.allow-unsigned-executable-memory`, `com.apple.security.cs.disable-library-validation` (Tauri loads dynamic libs), and `com.apple.security.automation.apple-events` (the metadata collector uses AppleScript to query browsers and the frontmost window).
+- **`.env.local`** (gitignored, not in this commit): Holds `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_PASSWORD` (app-specific from appleid.apple.com), and `APPLE_SIGNING_IDENTITY`. All values now quoted so the file is shell-sourceable. **The build process requires sourcing this file**: `set -a && . ./.env.local && set +a && pnpm tauri build`.
+- **Apple Developer ID Application certificate** (in keychain, not in repo): Generated via `openssl genrsa` + `openssl req -new` + `security import` after the GUI Keychain Access flow lost the original private key. The corresponding `.p12` (private key + cert bundled) and the raw `.pem` private key are stored in 1Password — losing those means re-doing the cert flow from scratch.
+- **Apple Developer ID G2 intermediate CA** (in keychain): Downloaded from `https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer` and imported. Without this, `codesign` reported `unable to build chain to self-signed root` and `find-identity` returned 0 valid identities even though both the cert and key were in the keychain. Modern macOS builds usually include this — this Mac apparently didn't.
+- **Build pipeline confirmed working** (`src-tauri/target/release/bundle/dmg/VisionPipe_0.1.0_aarch64.dmg`, 5.5 MB): `spctl -a -t open -vv` reports `accepted, source=Notarized Developer ID`. `codesign --verify --deep --strict` reports `valid on disk, satisfies its Designated Requirement`. `xcrun stapler staple` succeeded for both the `.app` and the `.dmg`.
+
+### Potential concerns to address:
+
+- **Tauri's notarization polling times out**: The first `pnpm tauri build` failed with `NSURLErrorDomain Code=-1001 "The request timed out"` while waiting for Apple. Apple actually accepted the submission (verified via `xcrun notarytool info <id>`) — Tauri just gave up polling too early. Workaround in this commit: build the `.app` via Tauri (signing happens fine), then manually `hdiutil create` a `.dmg`, `codesign --timestamp` it, `xcrun notarytool submit ... --wait` (no client-side timeout), and `xcrun stapler staple`. **For future releases, consider scripting this end-to-end** (`scripts/build-release.sh`) instead of relying on Tauri's bundled notarization.
+- **Bundle identifier rename invalidates prior installs**: The change from `com.visionpipe.app` to `com.visionpipe.desktop` means macOS treats this as a brand-new app — the old app's preferences, accessibility/screen-recording grants, and Login Items entry don't carry over. Acceptable here since v0.1.0 isn't shipped yet, but worth flagging for any future identifier changes.
+- **Architecture-specific build**: The `.dmg` filename is `VisionPipe_0.1.0_aarch64.dmg` — Apple Silicon only. Intel users on macOS would need a separate `x86_64` build (or a universal binary built via `pnpm tauri build --target universal-apple-darwin`). Decide whether to ship a universal build or only Apple Silicon.
+- **`.dmg` has no custom layout / background**: We used a plain `hdiutil create -format UDZO`, not Tauri's nicer create-dmg path with the drag-to-Applications layout. Functional but unpolished. When we automate the release script, switch back to `create-dmg` or use Tauri's bundler with the polling fix.
+- **Notarytool credentials live in `.env.local`**: Sourcing the file exports the credentials into every subprocess Tauri spawns. Acceptable for local builds; for CI we'd want to use `notarytool store-credentials` to put them in the keychain instead, then reference by profile name.
+
+---
+
 ## Progress Update as of 2026-05-02 12:15 PDT
 *(Most recent updates at top)*
 
