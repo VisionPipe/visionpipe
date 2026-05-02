@@ -4,6 +4,38 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 17:00 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Brainstormed and committed the design spec for the multi-screenshot session redesign — VisionPipe evolves from "one screenshot, one annotation" into "session of N screenshots with continuous real-time voice narration interleaved across them, output as a markdown document optimized for Claude Code consumption." Spec was scope-decomposed: cloud sharing (secret links, billing gate) is split into a separate Spec 2 to keep Spec 1 focused on the local capture/narration flow.
+
+### Detail of changes made:
+
+- **New design spec** (`docs/superpowers/specs/2026-05-02-multi-screenshot-narrated-bundle-design.md`): ~600-line design doc covering 11 sections — summary, goals/non-goals, brainstorming decisions, data model, rendered markdown format, capture & audio mechanics, UI components & interactions (with Settings/hotkeys), testing strategy, risk register, Spec 2 handoff notes, explicit out-of-scope list. Brainstormed via 7 structured Q&A turns with the user using the `superpowers:brainstorming` skill.
+- **Key architectural decisions captured**:
+  - Audio = continuous recording with auto-inserted screenshot markers, plus per-segment re-record (hybrid model)
+  - Output = markdown on clipboard + images on disk in `~/Pictures/VisionPipe/session-<ts>/`; no big composite image
+  - Capture flow = hotkey goes straight to region-select (preserves muscle memory); session window appears AFTER capture #1
+  - Lifecycle = auto-save to disk on every change; "Copy & Send" keeps session open; window close preserves the folder on disk for Finder recovery
+  - Naming = canonical `VisionPipe-{seq}-{ts}-{app}-{context}` ≤180 chars, used as filename + alt-text + transcript marker; user "Caption" is a separate appended field that never renames the file
+  - Layout = interleaved (View B) by default, one-button toggle to split (View A); same data model under both
+  - Transcription = Deepgram Nova-3 streaming via VisionPipe-managed `vp-edge` proxy with per-install token (Keychain), 60-min/day rate limit; offline fallback preserves audio locally; on-device WhisperKit deferred to v0.3 opt-in
+- **Brainstorming companion artifacts** (`.superpowers/brainstorm/*` — gitignored): three layout mockups (two-column, interleaved, top-bottom strip) shown to user via the visual companion server; user picked interleaved (B) as default with toggle to split (A).
+- **Design spec excludes** (called out explicitly in §11): cloud upload (→ Spec 2), in-app session history browser (→ v0.3), drag-to-reorder (→ v0.3), resume prior session on app launch (→ v0.3), per-screenshot drawing/markup, cross-platform support, alternative transcription providers.
+
+### Potential concerns to address:
+
+- **`vp-edge` proxy is a real backend that doesn't exist yet**: Spec 1 names a hosted service (`<vp-edge-host>`) that authenticates per-install tokens and proxies to Deepgram with rate limiting. Building that backend is implicit work for Spec 1 implementation — needs to be on the plan. Could initially be a single Cloudflare Worker, but ops concerns (status page, alerting, cost cap) need to be addressed before public launch.
+- **Deepgram cost exposure during free trial**: Per-install rate limit (60 min/day) caps worst-case at ~$0.26/install/day, but a viral spike with thousands of installs could still produce real bills. Spec 2's billing gate is the long-term answer; interim mitigation should include an infra-level monthly spend cap and per-IP token-issuance throttle (Cloudflare).
+- **WhisperKit deferral may bite if privacy-conscious developers complain**: The brand promise of "no uploads, no integrations, no accounts" is meaningfully softened by sending audio to a cloud proxy. README and onboarding should be honest about the tradeoff. On-device WhisperKit as an opt-in is the planned out, but it's v0.3.
+- **Bundle-size delta is small but the proxy adds operational surface area**: VisionPipe today is 6.1 MB and ships zero backend. Spec 1 keeps the app small but introduces a hosted service, ops monitoring, and a billing path (Spec 2). The team should be ready to operate that.
+- **Spec 2 brainstorming should happen before Spec 1 implementation ships**: The session folder is the contract between the two specs — if Spec 2 reveals a constraint Spec 1 didn't anticipate (e.g., audio segment files instead of one master file for streaming-upload), it's much cheaper to fix in Spec 1's design phase than after the implementation lands. Recommend brainstorming Spec 2 next session, before plan-writing for Spec 1.
+- **No test plan exists yet for the proxy backend**: Spec 1 §8 covers app-side tests but not the `vp-edge` service. Plan-writing should add proxy-side tests (token issuance, rate limit enforcement, WebSocket forwarding, error path on Deepgram failure).
+
+---
+
 ## Progress Update as of 2026-05-02 14:10 PDT
 *(Most recent updates at top)*
 
