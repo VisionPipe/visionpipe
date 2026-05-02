@@ -396,7 +396,55 @@ Nothing in Spec 1 needs to change for Spec 2 to land. The session folder is the 
 
 ---
 
-## 11. Out of scope (explicit)
+## 11. Implementation handoff notes (read before writing the plan)
+
+These notes capture the strategic context that an engineer or LLM agent needs in order to make good judgment calls during implementation. They are not requirements but framing — read them before reading the plan, and re-read them when something feels wrong.
+
+### Brand promise vs. cloud transcription — be honest in copy
+
+VisionPipe's README and existing PRD say *"No uploads. No integrations. No accounts."* and position transcription explicitly as on-device Whisper. **Spec 1 ships Deepgram (cloud) as the default, which materially softens that promise.** Audio leaves the user's device through the `vp-edge` proxy to Deepgram. We accepted this tradeoff because real-time streaming is the experience the product owner wants and on-device Whisper-class models can't deliver real-time on most hardware. The implementation should:
+
+- Update the README and any onboarding copy to honestly describe what gets sent off-device
+- Add a per-session privacy note in the session window header on first launch ("Audio sent to Deepgram for transcription. Disable in Settings.")
+- Plan for the v0.3 on-device WhisperKit opt-in *before* shipping v0.2 publicly so the privacy escape hatch is on the visible roadmap
+
+### `vp-edge` is real new infrastructure, not a config change
+
+VisionPipe today is a single Tauri app with zero backend. Spec 1 introduces `vp-edge` — a hosted service that issues per-install tokens, enforces rate limits, and proxies WebSocket audio to Deepgram. **This is a separate codebase, separate deploy, separate ops surface.** It deserves its own implementation plan (not in scope for *this* plan, which covers only the Tauri app side). For local development, the plan below uses a mock `vp-edge` running on `localhost`. Production deployment is gated on the `vp-edge` plan being executed separately.
+
+The team should be ready for: a status page, on-call rotation, monthly Deepgram bill monitoring, an infra-level monthly spend cap, abuse-prevention rate limiting at the IP level (not just per-token), and a redeploy story when the proxy needs updates.
+
+### Spec 2 (cloud share + billing) should be brainstormed before Spec 1 implementation lands
+
+The session folder format is the contract between Spec 1 and Spec 2. If Spec 2 surfaces a constraint that Spec 1 didn't anticipate — for example, "we need per-segment audio files instead of one master file because streaming-upload of a 30-minute master file is too slow" — it's much cheaper to fix in Spec 1's design phase than after the implementation lands and users have folders on disk in the wrong shape. **Recommend brainstorming Spec 2 in the next session, before the engineer starts implementing Spec 1.**
+
+### Why the major architectural choices were made (in case you want to push back)
+
+| Choice | Real reason |
+|---|---|
+| Markdown on clipboard + images on disk (not big composite image, not multi-image clipboard, not zip) | Optimizes for Claude Code's `Read` tool: I get the story (text + structure) immediately and only consume image tokens when I need pixel detail. Composite-image OCR is lossy at scale; multi-image clipboard breaks across host apps; zip adds extraction friction. |
+| Continuous-with-markers audio (not per-screenshot segmented files) | Matches how developers actually narrate while debugging — uninterrupted train of thought across captures. Per-segment re-record gives polish without breaking the default flow. |
+| Hotkey straight to capture, session window appears after capture #1 (not session window first) | Preserves existing muscle memory for the "I see something — capture it now" reflex. Two seconds of pre-capture session-window setup would be a meaningful regression. |
+| `viewMode = "interleaved"` as default (not split) | Each card paired with its narration matches the mental model of "this card has these things to say." Split is power-user mode for re-reading the whole transcript top-to-bottom. |
+| Auto-save to disk on every change (not in-memory ephemeral) | A 10-screenshot, 5-minute narration session is real work. Crash/quit/Cmd+W must not lose it. Disk auto-save delivers crash-safety with zero history-UI engineering cost. |
+| Sequence numbers never reused after delete (`001`, then delete `002`, next is `003`) | Keeps canonical names (which are filenames) globally stable for the session lifetime. Reusing would require renaming files mid-session, breaking any external tool with the prior name cached. |
+| `vp-edge` proxy with per-install token (not user-supplied API key, not API-key-baked-into-binary) | User-supplied breaks "no accounts" on first use; baked-in key gets `strings`-extracted and abused. Proxy is the only model that gives zero-friction UX with cost control. |
+
+### Things that look weird but are intentional
+
+- **`audio-master.webm` is one file**, even with re-records. Re-records produce *sibling* files referenced by `screenshot.reRecordedAudio`. The master is never modified. Reason: edits should never destroy the original recording.
+- **Closing narration is a top-level `Session` field**, not attached to the last `Screenshot`. Reason: "wrap up the bug report" semantically differs from "describe screenshot N."
+- **`viewMode` is persisted per-session in `transcript.json` AND per-user in `localStorage`**. Reason: the session value is what gets serialized for sharing/cloud; the user value is what determines the default for new sessions.
+- **The capture ~2-second window is silently attached to the prior segment, not a separate "interstitial" segment.** Reason: the alternative (creating an empty card or transcript chunk per capture) clutters the output for zero benefit.
+- **Drag-to-reorder is explicitly v0.3+, not v0.2.** Reason: reordering invalidates `audioOffset` ranges; the cleanest fix is to chop `audio-master.webm` into per-segment files, which is a Spec 2 concern (since it interacts with cloud-upload streaming).
+
+### Test discipline
+
+This codebase ships to real users with a signed/notarized .dmg. Past commits show that test coverage has been lacking — the existing `App.tsx` is 847 lines and has zero tests. **The plan adds Vitest + @testing-library/react and treats new code as TDD-required.** Existing untested code is left as-is (cleanup is not in scope for Spec 1) but new modules added by this plan must have tests landed alongside them in the same commit.
+
+---
+
+## 12. Out of scope (explicit)
 
 These are intentionally not in this spec, called out so future sessions don't re-litigate:
 

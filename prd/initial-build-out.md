@@ -4,6 +4,44 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 17:30 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Wrote the implementation plan for the multi-screenshot session redesign (Spec 1) and committed it alongside an expanded "Implementation handoff notes" section in the spec doc. The plan is self-contained — a fresh Claude agent reading just the spec + plan files can execute end-to-end without our brainstorming conversation as context. The plan covers ~26 bite-sized tasks across 9 phases (foundation, markdown rendering, session window shell, card UI, audio recording, Deepgram streaming with mock vp-edge, view toggle, settings/hotkeys, integration verification). Production `vp-edge` proxy backend is explicitly deferred to a separate plan.
+
+### Detail of changes made:
+
+- **New plan file** (`docs/superpowers/plans/2026-05-02-multi-screenshot-narrated-bundle.md`): ~1500-line implementation plan with phases A-I, file structure map, exact code per step, exact bash/test commands, expected outputs per check, commit messages per task. Each task is bite-sized (4-6 steps, 2-5 minutes each). TDD discipline: failing test → minimum implementation → passing test → commit.
+- **Spec update** (`docs/superpowers/specs/2026-05-02-multi-screenshot-narrated-bundle-design.md`): Added new §11 "Implementation handoff notes" between the original §10 and §11 (renumbering original §11 to §12). The new section captures the strategic context that came up only in conversation: brand-promise tradeoff with Deepgram (acknowledges README copy needs honest update), the reality that `vp-edge` is new infrastructure not just config, recommendation to brainstorm Spec 2 before Spec 1 implementation lands, a "why this choice" table for each major decision, "things that look weird but are intentional" callouts, and explicit test discipline notes.
+- **Plan structure**:
+  - Pre-flight checks (working dir, deepgram key, mic permission)
+  - Phase A (Tasks 1-5): Vitest + types + canonical-name + Rust session folder + reducer/Context
+  - Phase B (Task 6): Markdown renderer with golden-file fixtures
+  - Phase C (Tasks 7-8): App.tsx rewrite + thin idle/session router + persistence debouncer
+  - Phase D (Tasks 9-12): Header + Footer + ScreenshotCard + InterleavedView + Lightbox
+  - Phase E (Tasks 13-15): MediaRecorder wrapper + audio lifecycle + per-segment re-record modal
+  - Phase F (Tasks 16-19): vp-edge mock server + Keychain token storage + Deepgram WS client + streaming UI integration with offline fallback
+  - Phase G (Task 20): SplitView + view-mode toggle + per-user persistence
+  - Phase H (Tasks 21-22): Hotkey config (Rust + JSON) + Settings panel + HotkeyBindingRow with conflict detection (with tests)
+  - Phase I (Tasks 23-26): Window-scoped hotkey wiring + README disclosure + smoke checklist + final verification
+- **Explicit out-of-scope list** at the bottom of the plan: production vp-edge, Spec 2 cloud, WhisperKit on-device, in-app history, drag-reorder, dead-dep cleanup (cpal/candle/whisper deps), drawing layer, cross-platform.
+- **Self-review** done inline: scanned for "TBD/TODO/fill in" placeholders (one inline-code TODO comment found and rewritten to a clarifying note); verified function-name consistency across tasks (`generateCanonicalName`, `renderMarkdown`, `useSession`, `createRecorder`, `connectDeepgram`, `getOrIssueToken`, `useMic`, etc. all match between definition and use).
+
+### Potential concerns to address:
+
+- **Plan estimates ~26 tasks** but doesn't estimate calendar time. Realistic guess: 2-3 weeks for an experienced React+Tauri engineer working full-time, longer if Tauri's permission model or asset-protocol setup hits friction. The vp-edge mock is fast (~30 min), but Phase F (Deepgram integration) is the highest-risk phase because of WebSocket lifecycle, reconnect logic, and offline state machine — budget extra time there.
+- **`src/App.tsx` becomes large again during Phase C**: the rewrite consolidates capture flow, mic lifecycle, Deepgram lifecycle, hotkey listening, and event-bus wiring into one component. By end of Phase F, `App.tsx` may be ~400 lines. This is a regression from the design's stated preference for small focused files. The plan accepts this for v0.2 — splitting into `useCaptureFlow`, `useMicLifecycle`, `useDeepgramLifecycle`, `useHotkeys` custom hooks is a v0.2.1 cleanup task. If this offends the implementing engineer, encourage them to split as they go.
+- **`MicContext` lives in two places transiently**: defined inline in App.tsx in Task 14, then refactored to `src/state/mic-context.tsx` in Task 19. The intermediate state works but is a small wart. An engineer could combine Tasks 14 + 19 into a single setup if preferred.
+- **Plan's overflow menu uses `window.prompt()`** as a stop-gap (numeric choice 1/2/3). This is functional but ugly. v0.2.1 should replace with a real popover menu. Documented in the Header component code comment.
+- **Asset protocol scope `$PICTURE/VisionPipe/**`** in `tauri.conf.json` may need verification against the engineer's Tauri version. The plan documents the change but the exact JSON path may differ in Tauri 2 vs Tauri 1 syntax. If the engineer hits a "not allowed by capabilities" error loading screenshot images, that's the suspect.
+- **Smoke checklist (Task 25) is a manual testing artifact**, not automated. Continuous-integration coverage of the full session flow is left to a future investment. For v0.2 ship, manual smoke is the gate.
+- **Dead Rust deps** (`cpal`, `candle-*`, `whisper-*`, `symphonia`, `rubato`, `tokenizers`, `hf-hub`) still in `Cargo.toml` — they were added speculatively for on-device Whisper before the Deepgram pivot. Plan deliberately leaves them in to keep this commit focused; they should be removed in a v0.2.1 cleanup. Bundle bloat cost is real (~30-50 MB extra in the binary even unused) but quantifying is plan-out-of-scope.
+- **Spec 2 brainstorm timing**: Plan top-of-file recommends brainstorming Spec 2 before Spec 1 implementation lands. If the team starts implementing without the Spec 2 brainstorm, they may discover late that the session-folder format needs tweaking for cloud upload (e.g., per-segment audio files instead of one master). This is the single most important meta-recommendation in this commit.
+
+---
+
 ## Progress Update as of 2026-05-02 17:00 PDT
 *(Most recent updates at top)*
 
