@@ -4,6 +4,32 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 14:10 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added a one-command release pipeline at `scripts/release.sh` that builds a polished, signed, notarized, stapled `.dmg` and copies it into the sibling `visionpipe-web` project's `public/downloads/` for deployment. Fixed the missing app icon on the bundled `.app` (the prior commit's `bundle` block overrode Tauri's default icon discovery without re-declaring `bundle.icon`). Documented the release workflow in `CLAUDE.md` so future sessions know to use the script instead of `pnpm tauri build`.
+
+### Detail of changes made:
+
+- **`scripts/release.sh`** (new, executable): Seven-step pipeline — build .app via Tauri (with `APPLE_ID`/`APPLE_PASSWORD` temporarily unset so Tauri skips its own flaky notarization polling), notarize and staple the .app via `ditto` + `notarytool submit --wait`, rebuild a polished .dmg around the stapled .app via `create-dmg` (drag-to-Applications layout with the .app icon on the left and an Applications symlink on the right), sign + notarize + staple the .dmg, verify with `spctl -a -t open --context context:primary-signature -vv`, and copy the result into `../visionpipe-web/public/downloads/` as both `VisionPipe-<version>.dmg` (versioned) and `VisionPipe.dmg` (stable "latest" link). Reads `.env.local` for credentials. Fails fast if any prerequisite is missing (cert in keychain, `create-dmg` installed, env vars set).
+- **`src-tauri/tauri.conf.json`**: Added `bundle.icon` array referencing `icons/32x32.png`, `icons/128x128.png`, `icons/icon.icns`, `icons/icon.png`. Without this, the `.app` bundled with no icon and showed the default macOS placeholder. Tauri auto-detects icons by convention only when `bundle` is unset — declaring `bundle` requires also declaring `bundle.icon` explicitly.
+- **`CLAUDE.md`**: Added a "Releasing a signed + notarized build" section documenting why `pnpm tauri build` should not be used directly for releases (Tauri's notarization polling fires before Apple responds), what `scripts/release.sh` does, and the prerequisites needed before running it (.env.local, Developer ID Application cert, Apple Developer ID G2 intermediate CA, `create-dmg`).
+- **`create-dmg`** installed via `brew install create-dmg` (not in repo).
+- **Final artifact verified**: `VisionPipe_0.1.0_aarch64.dmg`, 6.1 MB. Gatekeeper reports `accepted, source=Notarized Developer ID`. Camera icon shows correctly on the .app inside the DMG window.
+
+### Potential concerns to address:
+
+- **Apple Silicon only**: The DMG filename includes `aarch64`. Intel-Mac users won't be able to run this build. Estimated mid-2026 active install base is ~70-85% Apple Silicon (early-adopter audience likely higher), so shipping ARM-only for v0.1.0 is a reasonable trade-off. To add Intel support, change the `pnpm tauri build` line in `scripts/release.sh` to `pnpm tauri build --target universal-apple-darwin` — doubles compile time and adds ~5-10 MB to the DMG.
+- **Hardcoded paths in `scripts/release.sh`**: `WEB_PROJECT="/Users/drodio/Projects/visionpipe-web"` is hardcoded to the user's machine. Anyone else cloning the repo would need to either change this or set it via env var. Consider parameterizing if the project gets contributors.
+- **No `.dmg` background image**: `create-dmg` falls back to a plain white window with no arrow art pointing from the app to the Applications folder. Functional but not maximally polished. Add a `--background path/to/bg.png` flag (and a 660x400 background asset) when a designer is available.
+- **App-specific password in `.env.local`**: The `notarytool` calls inline credentials from env vars. For a future CI release pipeline we should switch to `xcrun notarytool store-credentials` (which puts the credentials in the keychain as a named profile) and reference the profile by name. That avoids exposing the password in env-var-readable contexts.
+- **Each release commit adds ~6 MB to `visionpipe-web` git history**: Acceptable for a small project but will compound. If shipping multiple releases per week, consider Git LFS for the .dmg files or moving downloads to S3/R2 with the website linking to external URLs.
+- **`bundle.icon` change is a "fix-the-fix" pattern**: When I added the `bundle` block earlier today, I didn't realize it would override Tauri's default icon discovery. Worth a comment in `tauri.conf.json` noting that adding new `bundle` fields requires re-checking that all defaults are explicitly declared.
+
+---
+
 ## Progress Update as of 2026-05-02 13:55 PDT
 *(Most recent updates at top)*
 

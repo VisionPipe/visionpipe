@@ -42,3 +42,32 @@ These hooks exist to remind you, not to enforce — the expectation is that you 
 
 - **`.git/hooks/pre-commit`** prints a warning if `prd/<branch-name>.md` exists but is not staged in the current commit.
 - **`.claude/settings.json`** has a `PostToolUse` hook on `Bash(git commit *)` that injects a reminder if you commit through Claude.
+
+## Releasing a signed + notarized build
+
+Use **`./scripts/release.sh`** for any release build. Do not run `pnpm tauri build` directly for releases — Tauri's built-in notarization polls Apple with a short timeout that often fires before Apple responds, even when the submission is ultimately accepted. The script uses `xcrun notarytool submit --wait` (no client-side timeout) instead.
+
+What the script does:
+1. Builds `.app` via Tauri (with signing, but with `APPLE_ID`/`APPLE_PASSWORD` temporarily unset so Tauri skips its own notarization)
+2. Notarizes and staples the `.app` (`ditto` + `notarytool submit --wait` + `stapler staple`)
+3. Re-bundles the stapled `.app` into a polished `.dmg` via `create-dmg` (drag-to-Applications layout)
+4. Signs, notarizes, and staples the `.dmg`
+5. Verifies with `spctl -a -t open --context context:primary-signature -vv`
+6. Copies the result into `../visionpipe-web/public/downloads/` as both `VisionPipe-<version>.dmg` (versioned) and `VisionPipe.dmg` (latest)
+
+Prerequisites (verify before running):
+- `.env.local` contains `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_PASSWORD` (app-specific), and `APPLE_SIGNING_IDENTITY`
+- Developer ID Application cert is in keychain (`security find-identity -v -p codesigning`)
+- Apple Developer ID G2 intermediate CA is in keychain — without it, `codesign` reports "unable to build chain to self-signed root". Download from `https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer` if missing.
+- `create-dmg` is installed: `brew install create-dmg`
+
+After the script finishes, deploy the new download:
+
+```
+cd ../visionpipe-web
+git add public/downloads
+git commit -m "Release v<version>"
+git push
+```
+
+Currently builds Apple Silicon (`aarch64`) only. For a Universal binary (Intel + Apple Silicon), pass `--target universal-apple-darwin` to the `pnpm tauri build` line in the script.
