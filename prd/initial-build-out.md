@@ -4,6 +4,123 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 12:15 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Backfilled four progress entries covering the seven commits from 2026-04-11 through 2026-04-13 that landed without log updates, then set up automation so this never happens again: a project-scoped `CLAUDE.md` codifies the per-commit log workflow, a `.git/hooks/pre-commit` reminder warns when the log is unstaged, and a Claude Code `PostToolUse` hook on `Bash(git commit *)` injects a reminder when committing through Claude.
+
+### Detail of changes made:
+
+- **Backfilled entries** (`prd/initial-build-out.md`): Added 4 dated entries above the prior `2026-04-11 21:00 UTC` entry, covering `7f6b3b8` + `b9853c2` (region offset fixes), `07246fb` (Retina via `screencapture`), `274cf0e` + `8bfca6e` + `eab2aaa` (two-column panel + Finder-paste clipboard), and `436f703` (PRD reorg + icons + `Cargo.lock` cleanup). All new entries use Pacific time and the `*(Most recent updates at top)*` subtitle. Older entries left in their original UTC format — not retroactively rewritten.
+- **Project-scoped `CLAUDE.md`** (new, project root): Codifies the per-commit log workflow: find `prd/<branch>.md`, prepend a new dated entry in the specified format, stage alongside code changes, and confirm to the user explicitly after committing. Project root location means it only applies to this project, not other Claude sessions (e.g., Storytell work).
+- **Pre-commit reminder** (`.git/hooks/pre-commit`, executable, non-blocking): Prints a warning if `prd/<current-branch>.md` exists but isn't staged in the current commit. Always exits 0 — never blocks a commit. Catches the case where the user commits from terminal without Claude.
+- **Claude Code `PostToolUse` hook** (`.claude/settings.json`): Filtered with `if: "Bash(git commit *)"`, outputs JSON with `hookSpecificOutput.additionalContext` reminding Claude to update the log when a commit lands through Claude. Validated by piping a synthetic Bash payload through `jq` — output is well-formed and the schema passes `jq -e` against `.hooks.PostToolUse[].hooks[].command`.
+- **`.gitignore`** (`/.claude/settings.local.json` added): Per-user permissions file is now gitignored so personal skill grants don't leak into the repo. The team-shared `.claude/settings.json` remains tracked.
+
+### Potential concerns to address:
+
+- **Git hooks aren't versioned**: `.git/hooks/pre-commit` lives outside git's tracked tree. If the repo is cloned to another machine, the hook is gone. Worth wrapping in `husky` or a `prepare` script in `package.json` later if multiple machines need it.
+- **Older entries still use UTC**: The pre-2026-04-13 entries were not retroactively rewritten to Pacific. Mixed timezones in the same log file is a minor inconsistency. Decide whether to convert them or accept the mixed format.
+- **`PostToolUse` hook fires after the commit lands**: If Claude forgets to stage the log update, the hook reminds it post-fact and a follow-up commit (or `--amend` in some cases) is needed. The pre-commit hook is the better-timed reminder; the `PostToolUse` hook is a backstop.
+- **Hook reload caveat**: The Claude Code settings watcher only observes directories that had a settings file at session start. For the current session this is fine (`.claude/settings.local.json` was already present), but if `.claude/` is created fresh in a future session, `/hooks` may need to be opened once to register the new file.
+
+---
+
+## Progress Update as of 2026-04-13 03:30 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Reorganized PRD materials into the `prd/` folder, refreshed the app icons with the camera logo at proper sizes, added a no-background logo variant, and cleaned up `Cargo.lock` after the `screenshots` and `image` crates were removed in the prior Retina switch. Also dropped Tauri-generated schema files into the repo.
+
+### Detail of changes made:
+
+- **PRD reorganization** (`prd/`): Moved `PRD.md` → `prd/PRD.md`. Added `prd/PRD-1.0-041126.md` (449-line consolidated PRD). Brought in `PRD Brainstorming.pdf`, the Storytell marketing doc PDF, and the two Zight design mockup screenshots.
+- **App icons refreshed** (`src-tauri/icons/`): Updated `32x32.png`, `128x128.png`, `256x256.png`, `icon.png`, and `icon.icns` to use the camera logo. Note `icon.icns` shrank from 1.65 MB to 1.25 MB and `icon.png` grew from 64 KB to 185 KB (now uses higher-quality source).
+- **New logo variant** (`src/images/visionpipe-logo-no-background.png`): 746 KB transparent-background variant added; original `logo1.png` renamed to `visionpipe-logo.png` for clarity.
+- **Cargo.lock sync** (`src-tauri/Cargo.lock`): 780 lines removed after dropping the `screenshots` and `image` crates (replaced by macOS native `screencapture` in `07246fb`). Net `Cargo.lock` shrank substantially.
+- **Generated schemas committed** (`src-tauri/gen/schemas/`): `desktop-schema.json`, `macOS-schema.json`, `acl-manifests.json`, `capabilities.json` added. These are Tauri-generated capability schemas — usually `.gitignore`d, so worth checking whether this was intentional.
+
+### Potential concerns to address:
+
+- **Generated schemas in git**: `src-tauri/gen/schemas/*.json` are normally regenerated per build. Committing them risks merge conflicts and stale specs. Consider `.gitignore`-ing this directory.
+- **Two logo PNGs now in tree**: `visionpipe-logo.png` (renamed from `logo1.png`) and `visionpipe-logo-no-background.png` plus the SVG. Consolidate or document which is canonical.
+- **No PRD-1.0 vs PRD.md reconciliation**: Two PRD markdown files now coexist. Unclear which is current — needs a header note or one of them deleted.
+
+---
+
+## Progress Update as of 2026-04-12 17:30 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Restructured the composite image panel into a two-column layout, switched annotation copy to LLM-prompt-injection-safe attribution-based phrasing, captured at native Retina resolution via the `-r` flag, and added Finder-paste support by saving the PNG to `~/Pictures/VisionPipe/` and putting both PNG bytes and a file URL on the macOS NSPasteboard.
+
+### Detail of changes made:
+
+- **Two-column composite panel** (`src/App.tsx`): Restructured the annotation panel below the screenshot into left/right columns — left has user attribution and the quoted user request, right has capture metadata. Same font size on both columns lets the text be larger overall.
+- **Native Retina capture** (`src-tauri/src/capture.rs`): Added `-r` flag to `screencapture`, producing 3024×1964 instead of 1512×982 on 2x displays.
+- **LLM-safe annotation format** (`src/App.tsx`): Rewrote the annotation payload to follow attribution-based phrasing ("Annotation by VisionPipe.ai", "Submitted by: username") rather than model-directed commands. Added `[User input, passed verbatim]` marker around the user's free text to make injection attempts visible. Removed the conditional fallback instruction strings.
+- **Real captured-image dims** (`src/App.tsx`): Added `measureImageDims()` to report the actual captured image size and file bytes in the metadata block instead of estimating from selection coordinates.
+- **PNG saved to disk + clipboard file URL** (commit `8bfca6e`, `src-tauri/src/lib.rs`): New `save_and_copy_image` Rust command writes the composite PNG to `~/Pictures/VisionPipe/<timestamp>.png` and uses NSPasteboard via JXA to put both PNG image data AND a file URL on the clipboard. The file URL is what makes Finder/Desktop paste actually create a file. Falls back to AppleScript clipboard if NSPasteboard fails.
+- **Clipboard NSPasteboardItem fix** (commit `eab2aaa`, `src-tauri/src/lib.rs`): The first JXA implementation had two bugs — `clearContents` needed parens, and calling `writeObjects` after `setDataForType` cleared the PNG data. Rewrote to use a single `NSPasteboardItem` holding both PNG and file-URL representations, so the same paste yields a file in Finder and an image in image-aware apps. Stderr is now logged on failure.
+- **Diagnostic capture-resolution logging** (`src/App.tsx`): Added console output of captured image dimensions to verify Retina mode is working.
+
+### Potential concerns to address:
+
+- **`~/Pictures/VisionPipe/` grows unbounded**: Every capture writes a timestamped PNG. No cleanup, no rotation, no settings UI to manage it. Will eventually fill the user's disk on heavy use.
+- **JXA clipboard depends on JavaScript for Automation**: `osascript -l JavaScript` works on macOS 10.10+ but is a relatively niche path; if Apple deprecates JXA the clipboard write breaks. The AppleScript fallback covers image-only paste but not Finder paste.
+- **NSPasteboard via JXA spawns a subprocess per capture**: Adds noticeable latency vs a native pasteboard call from Rust. Worth benchmarking.
+- **Prompt-injection safety is best-effort**: The `[User input, passed verbatim]` marker and attribution phrasing reduce risk but a determined attacker can still embed model-directed text in a screenshot. Document the threat model.
+
+---
+
+## Progress Update as of 2026-04-11 21:00 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Replaced the `screenshots` Rust crate with macOS-native `screencapture` CLI to get full-resolution Retina captures. The crate was always returning 1x images, making text in captures blurry on 2x displays.
+
+### Detail of changes made:
+
+- **Switch to `screencapture`** (`src-tauri/src/capture.rs`): Region capture now shells out to `/usr/sbin/screencapture` instead of calling `CGDisplayCreateImageForRect` via the `screenshots` crate. Native macOS CLI captures at the display's actual resolution, so Retina displays get 2x pixel data automatically.
+- **Removed crate dependencies** (`src-tauri/Cargo.toml`): Dropped `screenshots` and the `image` crate (only used to encode the screenshots-crate output to PNG). Reduces Rust dependency surface significantly.
+
+### Potential concerns to address:
+
+- **Subprocess spawn cost**: `screencapture` is a fork+exec on every capture. Imperceptible to humans but slower than the in-process crate path. Acceptable for an interactive tool.
+- **macOS-only**: This commit further entrenches macOS-only behavior. Cross-platform region capture will need a different code path (Windows: `Graphics.Capture` API; Linux: X11/Wayland-specific).
+- **`screencapture` requires Screen Recording permission** in System Settings → Privacy & Security. Unprompted on first use but the user must grant it manually — needs onboarding UI.
+
+---
+
+## Progress Update as of 2026-04-11 14:30 PDT
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Two fixes for the region-capture coordinate math, plus an Enter-key fullscreen capture path and a polished overlay prompt. The region offset was visibly wrong on Retina displays and was visibly wrong even on non-Retina until logical (point) coordinates were used end-to-end.
+
+### Detail of changes made:
+
+- **Add window outerPosition offset** (commit `7f6b3b8`, `src/App.tsx`): The `clientX`/`clientY` from mouse events are window-relative, but the Rust `take_screenshot` command expects screen-relative coordinates. Now adds the Tauri window's `outerPosition` to the selection rectangle before sending to Rust. Fixes capture being off by the window's position from the screen origin.
+- **Use logical coordinates, not physical** (commit `b9853c2`, `src/App.tsx`): The `screenshots` crate's `CGDisplayCreateImageForRect` takes points (logical pixels), not physical pixels. We were multiplying by DPR, which doubled coordinates on Retina displays and shifted the captured region from the selection. Removed the DPR multiplication — CSS pixel values pass straight through.
+- **Enter-key fullscreen capture** (`src-tauri/src/lib.rs`, `src/App.tsx`): Pressing Enter during selection mode triggers a full-screen capture instead of a region. Useful when you want everything on screen without dragging.
+- **Polished overlay prompt** (`src/App.tsx`): Added a semi-transparent background pill behind the crosshair prompt. New copy: "Let's screenshot | llm it!" with a subtitle showing drag/enter/esc options. Instruction text changed to "parse the image".
+- **Annotation panel font sizing** (`src/App.tsx`): Cap the annotation text panel at 20% of the captured image height with a binary-searched font size (min 8px) to fit. Prevents overflow on tall captures with long annotations.
+- **Devtools disabled by default** (`src-tauri/src/lib.rs`): Devtools were shifting the webview offset, which compounded the coordinate bug. Disabled outside debug builds.
+
+### Potential concerns to address:
+
+- **DPR math removed entirely**: Now there's no DPR handling anywhere in the capture path. If a future change uses physical-pixel APIs (e.g., direct `CGImage`), this will quietly capture at the wrong size. Worth a comment in `App.tsx` explaining why DPR multiplication is intentionally absent.
+- **Enter-key fullscreen doesn't show preview**: Pressing Enter immediately captures the whole screen with no confirmation. Easy to trigger accidentally. Consider a brief flash or a confirmation step.
+- **Devtools disable applies to debug builds too?**: Verify the gating — earlier debug-only `open_devtools()` was load-bearing for diagnosing the permissions issue. If it's now off in debug too, that hurts dev velocity.
+
+---
+
 ## Progress Update as of 2026-04-11 21:00 UTC
 
 ### Summary of changes since last update

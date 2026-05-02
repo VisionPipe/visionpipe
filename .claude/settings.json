@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"A git commit just landed on this project. Per CLAUDE.md, every commit on a dev branch must be paired with a new entry at the top of prd/<branch-name>.md. If you did not stage the log update with this commit, run git show HEAD --stat to confirm what landed, then prepend a new entry to the log using the format in CLAUDE.md (## Progress Update as of YYYY-MM-DD HH:MM Pacific, *(Most recent updates at top)*, ### Summary, ### Detail, ### Potential concerns, ---) and either amend or do a follow-up commit. After updating, tell the user you updated the log.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}

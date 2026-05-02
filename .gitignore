@@ -7,3 +7,4 @@ src-tauri/target/
 *.tsbuildinfo
 .next/
 .superpowers/
+.claude/settings.local.json
