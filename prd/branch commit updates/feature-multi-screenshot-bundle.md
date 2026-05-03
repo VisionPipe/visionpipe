@@ -1,3 +1,22 @@
+## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 5: session reducer + Context)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added a `useReducer`-based session state manager and React Context provider as the central frontend state layer for multi-screenshot sessions. Created `src/state/session-reducer.ts` exporting `SessionState`, `SessionAction` (13 action variants), `initialState`, and `sessionReducer` — a pure function covering the full session lifecycle: start/end, screenshot append (with automatic audioOffset.end stamping on the prior entry), delete (preserving seq gaps), caption/transcript updates, offline marking, re-recorded audio, closing narration, and view mode toggling. Created `src/state/session-context.tsx` with `SessionProvider` (wraps `useReducer`) and `useSession` hook (throws if used outside provider). All 6 new reducer tests pass; total suite is 14 tests across 2 files. TDD: test file written first, confirmed failing, then implementation landed.
+
+### Detail of changes made:
+
+- **`src/state/__tests__/session-reducer.test.ts`** (created) — 6 tests covering: idle initial state, START_SESSION, APPEND_SCREENSHOT with audioOffset.end stamping, DELETE_SCREENSHOT with seq-gap preservation, UPDATE_CAPTION by seq, and TOGGLE_VIEW_MODE round-trip.
+- **`src/state/session-reducer.ts`** (created) — exports `SessionState` interface, `initialState` constant, `SessionAction` discriminated union (13 variants), and `sessionReducer` pure function. Helper `touch()` stamps `updatedAt` on every mutating action. All state transitions are immutable (spread-based). No external dependencies.
+- **`src/state/session-context.tsx`** (created) — exports `SessionProvider` component (wraps `useReducer(sessionReducer, initialState)` in `SessionContext.Provider`) and `useSession()` hook (throws descriptive error when used outside provider). Uses React 19 `createContext` / `useContext` / `useReducer`.
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 4: Rust session folder management)
 *(Most recent updates at top)*
 
