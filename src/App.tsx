@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import logoUrl from "./images/visionpipe-logo.svg";
 
 // ── Earthy palette ──
@@ -97,9 +98,15 @@ function App() {
   const [selection, setSelection] = useState<SelectionRect | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
+  const [justCopied, setJustCopied] = useState(false);
+  const [appVersion, setAppVersion] = useState("0.0.0");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modeRef = useRef<AppMode>(mode);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   const captureCredits = 1 + (transcript ? 2 : 0);
 
@@ -206,7 +213,10 @@ function App() {
     // since the screenshots crate uses macOS point coordinates.
     const winPos = await win.outerPosition();
     await win.hide();
-    await new Promise((r) => setTimeout(r, 150));
+    // 300ms ensures the transparent webview is fully off-screen before
+    // screencapture runs — 150ms wasn't always enough on M-series Macs and
+    // the selection overlay was getting baked into the captured image.
+    await new Promise((r) => setTimeout(r, 300));
 
     const dpr = window.devicePixelRatio || 1;
     // macOS CGDisplayCreateImageForRect uses point (logical) coords,
@@ -250,7 +260,7 @@ function App() {
     try {
       const { LogicalSize } = await import("@tauri-apps/api/dpi");
       await win.setAlwaysOnTop(false);
-      await win.setSize(new LogicalSize(920, 552));
+      await win.setSize(new LogicalSize(880, 492));
       await win.center();
       await new Promise((r) => setTimeout(r, 100));
       await win.show();
@@ -268,7 +278,10 @@ function App() {
   const captureFullScreen = useCallback(async () => {
     const win = getCurrentWindow();
     await win.hide();
-    await new Promise((r) => setTimeout(r, 150));
+    // 300ms ensures the transparent webview is fully off-screen before
+    // screencapture runs — 150ms wasn't always enough on M-series Macs and
+    // the selection overlay was getting baked into the captured image.
+    await new Promise((r) => setTimeout(r, 300));
 
     const dpr = window.devicePixelRatio || 1;
 
@@ -303,7 +316,7 @@ function App() {
     try {
       const { LogicalSize } = await import("@tauri-apps/api/dpi");
       await win.setAlwaysOnTop(false);
-      await win.setSize(new LogicalSize(920, 552));
+      await win.setSize(new LogicalSize(880, 492));
       await win.center();
       await new Promise((r) => setTimeout(r, 100));
       await win.show();
@@ -377,7 +390,7 @@ function App() {
       { text: `${metadata.memoryGb} | ${metadata.battery}`, color: C.textMuted },
       { text: `${metadata.username}@${metadata.hostname}`, color: C.textMuted },
       { text: `${metadata.timestamp}`, color: C.textMuted },
-      { text: `Vision|Pipe v0.1.0`, color: C.textDim },
+      { text: `Vision|Pipe v${appVersion}`, color: C.textDim },
     ];
 
     // Determine canvas width first
@@ -546,13 +559,19 @@ function App() {
       lines.push(`color space: ${metadata.colorSpace} | dark mode: ${metadata.darkMode ? "yes" : "no"} | battery: ${metadata.battery}`);
       if (metadata.activeUrl) lines.push(`url: ${metadata.activeUrl}`);
       lines.push(`captured: ${metadata.timestamp} | image: ${metadata.captureWidth}x${metadata.captureHeight}px (${metadata.imageSizeKb > 1024 ? (metadata.imageSizeKb / 1024).toFixed(1) + " MB" : metadata.imageSizeKb + " KB"}) | ${metadata.captureMethod}`);
-      lines.push("---", "Vision|Pipe v0.1.0");
+      lines.push("---", `Vision|Pipe v${appVersion}`);
       await writeText(lines.join("\n"));
     }
 
     setSessionCredits((c) => c + captureCredits);
-    resetAndHide();
-  }, [annotation, transcript, metadata, captureCredits, croppedScreenshot]);
+
+    // Show "Copied!" confirmation, then auto-close after 1.5s
+    setJustCopied(true);
+    setTimeout(() => {
+      setJustCopied(false);
+      resetAndHide();
+    }, 1500);
+  }, [annotation, transcript, metadata, captureCredits, croppedScreenshot, appVersion]);
 
   const resetAndHide = useCallback(async () => {
     setAnnotation("");
@@ -670,12 +689,12 @@ function App() {
   // ═══════════════════════════════════════
   return (
     <div style={{
-      width: "100vw", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(20, 30, 24, 0.9)",
+      width: "100vw", height: "100vh", display: "flex", alignItems: "stretch", justifyContent: "stretch",
+      background: "transparent",
       fontFamily: "Verdana, Geneva, sans-serif",
     }}>
       <div style={{
-        display: "flex", flexDirection: "column", width: 880, height: 492, borderRadius: 14, overflow: "hidden",
+        display: "flex", flexDirection: "column", flex: 1, borderRadius: 14, overflow: "hidden",
         border: `1px solid ${C.border}`,
         boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(46, 139, 122, 0.1)",
       }}>
@@ -903,6 +922,30 @@ function App() {
         </div>
         </div>
       </div>
+
+      {justCopied && (
+        <div style={{
+          position: "fixed", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(20, 30, 24, 0.96)",
+          zIndex: 100,
+          borderRadius: 14,
+          backdropFilter: "blur(4px)",
+        }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{
+              fontSize: 56, color: C.teal, fontWeight: 700, lineHeight: 1, marginBottom: 16,
+            }}>✓</div>
+            <div style={{
+              color: C.cream, fontSize: 22, fontWeight: 700, marginBottom: 6,
+              fontFamily: "Verdana, Geneva, sans-serif",
+            }}>Copied to clipboard</div>
+            <div style={{ color: C.textMuted, fontSize: 13, fontFamily: "Verdana, Geneva, sans-serif" }}>
+              Paste into ChatGPT, Claude, or any LLM.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
