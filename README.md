@@ -35,7 +35,12 @@ No uploads. No integrations. No UI sprawl. Just the Unix philosophy applied to A
 Vision|Pipe captures what you *mean*, not just what you see.
 
 ### Speak It
-Record a voice note alongside your screenshot. Vision|Pipe transcribes it automatically and bundles the transcript with the image.
+
+Record continuous voice narration alongside your screenshots — narrate naturally as you take captures within a session, and Vision|Pipe transcribes in real time.
+
+**v0.2 (current):** Real-time transcription via Deepgram Nova-3, routed through Vision|Pipe's `vp-edge` proxy. **Audio is sent off-device for transcription.** No account or API key needed; per-install rate limits keep usage capped at 60 minutes/day during the free trial. Audio is always preserved locally as `audio-master.webm` even when offline.
+
+**v0.3 (planned):** On-device WhisperKit will be available as an opt-in for users who prefer to keep audio fully local. Cloud-based real-time transcription will remain the default for the lowest-friction experience.
 
 ```
 "This dropdown is rendering below the viewport on Safari — why?"
@@ -214,12 +219,18 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup.
 
 ## Roadmap
 
-- [ ] Custom hotkey configuration
-- [ ] Voice transcription via on-device Whisper
+- [x] Multi-screenshot session capture
+- [x] Real-time voice transcription (Deepgram via vp-edge)
+- [x] User-configurable hotkeys
+- [ ] On-device transcription opt-in (WhisperKit) — v0.3
+- [ ] Cloud sharing with secret links — Spec 2 in progress
+- [ ] In-app session history browser — v0.3
+- [ ] Drag-to-reorder screenshots — v0.3
+- [ ] Linux + Windows support — future
+- [ ] Resume prior session on app launch — v0.3
+- [ ] Custom transcription provider (OpenAI Whisper API key) — v0.3
 - [ ] Drawing and markup layer
 - [ ] Browser metadata via Accessibility APIs
-- [ ] Screenshot history / clipboard manager
-- [ ] Linux support
 - [ ] Structured JSON metadata export
 - [ ] API for programmatic access
 

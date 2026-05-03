@@ -4,6 +4,29 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 08:00 PDT — v0.3.2 (Task 24: README transcription disclosure)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Replaced the misleading on-device-Whisper framing in `README.md` with an honest disclosure that v0.2 ships Deepgram Nova-3 cloud transcription routed through the `vp-edge` proxy, and that audio is sent off-device. The "Speak It" subsection under "Multi-Modal Annotation" now opens with a continuous-narration positioning, then splits into two clearly-labelled blocks: **v0.2 (current)** describing the Deepgram path, the no-account/no-API-key UX, the 60-min/day per-install rate limit, and the local `audio-master.webm` fallback when offline; and **v0.3 (planned)** describing the future opt-in WhisperKit path while making clear cloud will remain the default. The original example narration line (`"This dropdown is rendering below the viewport on Safari — why?"`) was preserved as a triple-backtick block beneath. The Roadmap section was rewritten end-to-end: shipped items moved to `[x]` (multi-screenshot session capture, Deepgram real-time transcription, user-configurable hotkeys); the four canonical v0.3 items from the task spec were added (WhisperKit opt-in, in-app session history browser, drag-to-reorder screenshots, resume prior session on app launch, custom Whisper-API-key provider); the Spec 2 cloud-sharing item was added; the existing Linux item was promoted to "Linux + Windows — future"; and the four pre-existing items not covered by the new template (drawing/markup layer, browser metadata via Accessibility APIs, structured JSON metadata export, API for programmatic access) were preserved as `[ ]` per the spec's "use judgment" guidance — none have shipped yet on this branch. The "Custom hotkey configuration" item was dropped because Tasks 21–23 shipped it and the new "User-configurable hotkeys" `[x]` item supersedes it. Two adjacent sections still contain on-device-Whisper claims that contradict the new disclosure ("Built With" lists "Whisper — on-device voice transcription" and "Features" lists "Auto-transcription — voice notes converted to text on-device") — the task spec only mandates the Speak It + Roadmap edits, so those were left untouched and are flagged below as a follow-up. Verification: `pnpm tsc --noEmit` clean (README isn't TypeScript), 22/22 vitest passing, no behavioral changes.
+
+### Detail of changes made:
+- **`README.md`** — "Speak It" section (lines 37–47): replaced 5-line description with the spec's 11-line v0.2/v0.3 disclosure, preserving the example-narration code block.
+- **`README.md`** — "Roadmap" section (lines 220–235): replaced 8 generic checkboxes with the 14-item ordered list from the spec, merging in 4 pre-existing roadmap items that weren't in the spec template.
+
+### Verification results:
+- `pnpm tsc --noEmit`: exit 0, no output (README is documentation, not TypeScript).
+- `pnpm test --run`: 4 test files / 22 tests passing in 3.84s — no regressions.
+- README rendering: visually inspected the diff via `Read` on lines 37–47 and 220–235; markdown structure (headings, bold, inline code, bulleted task list) is well-formed.
+
+### Potential concerns to address:
+- **"Built With" + "Features" still claim on-device Whisper**: Lines 159 (`[Whisper](https://openai.com/research/whisper) — on-device voice transcription`) and 168 (`Auto-transcription — voice notes converted to text on-device`) directly contradict the new "Speak It" disclosure. The Task 24 spec narrowly scopes the edits to "Speak It" + "Roadmap", so these were left as-is to avoid scope creep, but they should be cleaned up in a Task 25 follow-up — either dropped, hedged ("Whisper-compatible — on-device transcription planned for v0.3"), or replaced with Deepgram. The current state means a reader scanning the bullet lists could still infer on-device transcription.
+- **`Cmd+Shift+V` hotkey is still documented in "How It Works"**: Line 25 documents the global capture hotkey as `Cmd+Shift+V` / `Ctrl+Shift+V`, but the actual default after Tasks 19–23 is `CmdOrCtrl+Shift+C` (`take_next_screenshot`). Out of scope for this task, but inconsistent with the just-shipped "User-configurable hotkeys" roadmap item.
+- **`brew install visionpipe` doesn't exist yet**: Line 145 documents a Homebrew install path that hasn't been published. Not a Task 24 concern, but a reader trusting the new honest tone could be misled into believing this works.
+
+---
+
 ## Progress Update as of 2026-05-03 07:45 PDT — v0.3.2 (Task 23: Window-scoped hotkey wiring)
 *(Most recent updates at top)*
 
