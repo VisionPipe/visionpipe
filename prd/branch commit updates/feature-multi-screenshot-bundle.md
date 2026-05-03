@@ -4,6 +4,39 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 23:54 PDT — v0.3.2 (Task 16: vp-edge mock proxy server)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Opened Phase F (Deepgram integration) by standing up `vp-edge-mock/`, a self-contained Node.js mock of the production `vp-edge` transcription proxy that VisionPipe will eventually call from production builds. The mock lives in its own subfolder package (separate `package.json` + `package-lock.json` so the lone `ws@^8` dep stays out of the root pnpm workspace), exposes `POST /install`, `GET /health`, and `WSS /transcribe?token=…`, and runs in one of two modes determined entirely by the `DEEPGRAM_API_KEY` env: **echo mode** (default) emits a canned `Results` JSON envelope shaped like Deepgram Nova-3 every 1.5 s with `is_final`/`speech_final` flipping true every third chunk so the eventual UI renderer can exercise both interim and finalized states without burning a real ASR quota; **forwarding mode** opens an upstream `wss://api.deepgram.com/v1/listen?model=nova-3&...` connection with the API key in the `Authorization: Token …` header and pipes audio frames in / transcripts out unchanged. The root `package.json` already had `"dev:proxy": "node vp-edge-mock/server.mjs"` from Task 1, so once the file exists `pnpm dev:proxy` Just Works. Smoke-tested both endpoints with curl: `POST /install` returns `{"token":"<uuid>"}` and `GET /health` returns `ok`, and the startup banner correctly reports `Real Deepgram: DISABLED (echo mode)` when `DEEPGRAM_API_KEY` is unset. `pnpm tsc --noEmit` clean (no TS surface added), 18/18 vitest tests pass, `pnpm vite build` still 247.72 kB / 75.78 kB gzipped.
+
+### Detail of changes made:
+- **New `vp-edge-mock/server.mjs`** (~70 LOC, ESM): `node:http` server bound to `PORT ?? 8787`. Routes: `POST /install` mints a UUIDv4 token, stores `{ issuedAt, minutesUsed: 0 }` in an in-memory `Map`, returns `{ token }` JSON; `GET /health` returns 200 `ok`; everything else 404. A `WebSocketServer` (from `ws@^8`) is attached to the same HTTP server on path `/transcribe`. On connection it parses `?token=…` from the URL, rejects with close code `1008 "Unauthorized"` if the token is missing or unknown. If `DEEPGRAM_API_KEY` is set, opens an upstream `WebSocket` to Deepgram Nova-3 and bridges `message`/`close` in both directions (with a `readyState === OPEN` guard on the upstream send so early audio frames don't crash). Otherwise runs the echo loop: `setInterval(1500 ms)` increments a `chunkCount`, sends a Deepgram-shaped `{ type: "Results", is_final, speech_final, channel: { alternatives: [{ transcript, confidence }] }, start, duration }`, and clears the interval on client `close`. Startup logs three lines: listening URL, WebSocket URL template, and the Deepgram mode.
+- **New `vp-edge-mock/README.md`**: Documents how to run (`pnpm dev:proxy` or `node vp-edge-mock/server.mjs`), the three endpoints, the two modes (echo vs forwarding), and an explicit "Spec 1 vs production `vp-edge`" section calling out that the real proxy will add per-token rate limiting (60 min/day), per-IP `/install` throttling, monthly spend cap, observability, and Cloudflare Workers deployment — none of which the mock implements.
+- **New `vp-edge-mock/package.json`** (via `npm init -y`): standard scaffold, name `vp-edge-mock`, version `1.0.0`, single dep `ws@^8.18.3`. Kept in the subfolder so it doesn't touch the root pnpm workspace.
+- **New `vp-edge-mock/package-lock.json`**: npm lockfile generated alongside, committed for reproducibility.
+- **`vp-edge-mock/node_modules/`** is created locally by `npm install` but ignored by the root `.gitignore` (`node_modules/` line covers nested packages — verified with `git check-ignore -v` and `git ls-files --others --exclude-standard vp-edge-mock/`, which only returned the four source files).
+
+### Smoke test results:
+- `POST /install` → `{"token":"0db3eb82-c33e-49c2-8cd1-0e9ea82c2d6d"}` (200)
+- `GET /health` → `ok` (200)
+- Server log on startup:
+  ```
+  [vp-edge-mock] Listening on http://localhost:8787
+  [vp-edge-mock] WebSocket: ws://localhost:8787/transcribe?token=…
+  [vp-edge-mock] Real Deepgram: DISABLED (echo mode)
+  ```
+
+### Potential concerns to address:
+- **In-memory token store**: Tokens vanish on every server restart. Acceptable for local dev (re-issue with `curl -X POST /install`), but the production proxy will need durable storage (Cloudflare KV or D1).
+- **No rate limiting**: A client could call `POST /install` in a hot loop and accumulate tokens. Fine for a localhost dev mock; the production proxy will add per-IP throttling.
+- **Forwarding mode is untested in CI**: We only smoke-tested echo mode (no `DEEPGRAM_API_KEY` available in this environment). The forwarding branch will get exercised later in Phase F when a real key is available — flagged here so a future engineer doesn't assume the upstream-bridge path is verified end-to-end yet.
+- **No `package-lock.json` for ws subdeps audit**: `npm install` reported "found 0 vulnerabilities" but we should `npm audit` periodically as `ws` evolves.
+- **Subfolder package uses npm, root uses pnpm**: Intentional (per the task spec) to keep `ws` out of the root pnpm workspace, but a future contributor may be confused why `pnpm install` from `vp-edge-mock/` doesn't work the same way. The README points at `pnpm dev:proxy` from the root, which is the intended workflow.
+
+---
+
 ## Progress Update as of 2026-05-02 23:51 PDT — v0.3.2 (Task 15: Re-record modal)
 *(Most recent updates at top)*
 
