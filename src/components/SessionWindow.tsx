@@ -5,12 +5,14 @@ import { InterleavedView } from "./InterleavedView";
 import { SplitView } from "./SplitView";
 import { Lightbox } from "./Lightbox";
 import { useSession } from "../state/session-context";
+import { useMic } from "../state/mic-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { invoke } from "@tauri-apps/api/core";
 
 export function SessionWindow() {
   const { state, dispatch } = useSession();
+  const mic = useMic();
   const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
 
   if (!state.session) return null;
@@ -40,16 +42,37 @@ export function SessionWindow() {
     window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq } }));
   };
 
+  // ── Flush master audio, then end the session ──
+  // Stops the recorder owned by App.tsx (via MicContext), awaits the Blob,
+  // writes audio-master.webm to the session folder, then clears the recorder
+  // ref in App.tsx and dispatches END_SESSION. The next first-capture branch
+  // in App.tsx will create a fresh recorder.
+  const onNewSession = async () => {
+    if (mic.recorder && session) {
+      try {
+        const blob = await mic.recorder.stop();
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        await invoke("write_session_file", {
+          folder: session.folder, filename: session.audioFile, bytes: Array.from(buf),
+        });
+      } catch (err) {
+        console.warn("[VisionPipe] Audio flush failed on new-session:", err);
+      }
+    }
+    mic.clearRecorder();
+    dispatch({ type: "END_SESSION" });
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#0e1410" }}>
       <Header
-        micRecording={false}
-        micPermissionDenied={false}
-        networkState="local-only"
-        onToggleMic={() => {}}
+        micRecording={mic.recording}
+        micPermissionDenied={mic.permissionDenied}
+        networkState={mic.networkState}
+        onToggleMic={mic.onToggle}
         onToggleViewMode={() => dispatch({ type: "TOGGLE_VIEW_MODE" })}
         onOpenSettings={() => alert("Settings will land in Phase H")}
-        onNewSession={() => dispatch({ type: "END_SESSION" })}
+        onNewSession={onNewSession}
         onOpenSessionFolder={() => alert(session.folder)}
       />
       <main style={{ flex: 1, overflow: "hidden" }}>

@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionProvider, useSession } from "./state/session-context";
+import { MicProvider } from "./state/mic-context";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
 import { IdleScreen } from "./components/IdleScreen";
 import { Onboarding } from "./components/Onboarding";
+import { createRecorder, type RecorderHandle } from "./lib/audio-recorder";
 import { generateCanonicalName } from "./lib/canonical-name";
 import type { PermissionStatus } from "./lib/permissions-types";
 import type { CaptureMetadata, Screenshot } from "./types/session";
@@ -24,6 +26,16 @@ function AppInner() {
   const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
   const modeRef = useRef<AppMode>("onboarding");
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  // ── Master audio recorder lifecycle ──
+  // The recorder is created lazily on first capture (so we don't request mic
+  // permission until the user actually begins a session). Stored as a ref
+  // because we mutate it from async callbacks; mirrored into React state
+  // (`micRecording`) for UI updates. After END_SESSION the ref is cleared so
+  // the next first-capture branch creates a fresh recorder.
+  const recorderRef = useRef<RecorderHandle | null>(null);
+  const [micRecording, setMicRecording] = useState(false);
+  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
 
   // ── Show/resize/center the window for onboarding ──
   const showOnboardingWindow = useCallback(async () => {
@@ -149,6 +161,19 @@ function AppInner() {
           screenshots: [], closingNarration: "",
         },
       });
+      // Kick off the master audio recorder once per session. After a previous
+      // session ends, recorderRef is cleared (see onNewSession in
+      // SessionWindow), so this branch always creates a fresh handle here.
+      if (!recorderRef.current) {
+        try {
+          recorderRef.current = await createRecorder();
+          await recorderRef.current.start();
+          setMicRecording(true);
+        } catch (err) {
+          console.warn("[VisionPipe] Mic permission denied or recorder init failed:", err);
+          setMicPermissionDenied(true);
+        }
+      }
     }
 
     const seq = (state.session?.screenshots[state.session.screenshots.length - 1]?.seq ?? 0) + 1;
@@ -167,7 +192,7 @@ function AppInner() {
       caption: "", transcriptSegment: "", reRecordedAudio: null,
       metadata, offline: false,
     };
-    dispatch({ type: "APPEND_SCREENSHOT", screenshot, audioElapsedSec: 0 });
+    dispatch({ type: "APPEND_SCREENSHOT", screenshot, audioElapsedSec: recorderRef.current?.elapsedSec() ?? 0 });
 
     setMode("session");
     const win = getCurrentWindow();
@@ -218,19 +243,83 @@ function AppInner() {
     }
   }, [state.session]);
 
+  // ── Mic toggle (Header button) — pause/resume the master recorder ──
+  const onToggleMic = useCallback(() => {
+    if (!recorderRef.current) return;
+    if (recorderRef.current.isRecording()) {
+      recorderRef.current.pause();
+      setMicRecording(false);
+    } else {
+      recorderRef.current.resume();
+      setMicRecording(true);
+    }
+  }, []);
+
+  // ── Clear the recorder ref after SessionWindow flushes audio at session end.
+  // Exposed via MicContext so SessionWindow's "New session" handler can null
+  // out the ref here, ensuring the next first-capture creates a fresh handle.
+  const clearRecorder = useCallback(() => {
+    recorderRef.current = null;
+    setMicRecording(false);
+  }, []);
+
+  // ── Flush master audio on window close / app quit ──
+  // The browser fires `beforeunload` when the Tauri window is being torn down.
+  // We stop the recorder, await the Blob, and synchronously kick off a write
+  // via `write_session_file`. Best-effort: a hard kill of the process won't
+  // run this. Re-bound when state.session changes so the closure captures the
+  // current folder.
+  useEffect(() => {
+    const handler = async () => {
+      if (recorderRef.current && state.session) {
+        try {
+          const blob = await recorderRef.current.stop();
+          const buf = new Uint8Array(await blob.arrayBuffer());
+          await invoke("write_session_file", {
+            folder: state.session.folder,
+            filename: state.session.audioFile,
+            bytes: Array.from(buf),
+          });
+          recorderRef.current = null;
+          setMicRecording(false);
+        } catch (err) {
+          console.warn("[VisionPipe] Audio flush failed on close:", err);
+        }
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [state.session]);
+
+  let view: ReactNode;
   if (mode === "onboarding") {
-    return (
+    view = (
       <Onboarding
         permissions={permissions}
         onRecheck={recheckPermissions}
         onDismiss={dismissOnboarding}
       />
     );
+  } else if (mode === "selecting") {
+    view = <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} />;
+  } else if (mode === "session" || state.session) {
+    view = <SessionWindow />;
+  } else {
+    view = <IdleScreen />;
   }
 
-  if (mode === "selecting") return <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} />;
-  if (mode === "session" || state.session) return <SessionWindow />;
-  return <IdleScreen />;
+  return (
+    <MicProvider value={{
+      recording: micRecording,
+      permissionDenied: micPermissionDenied,
+      onToggle: onToggleMic,
+      recorder: recorderRef.current,
+      networkState: "local-only",
+      clearRecorder,
+    }}>
+      {view}
+    </MicProvider>
+  );
 }
 
 export default function App() {
