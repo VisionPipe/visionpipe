@@ -4,6 +4,36 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 14:38 PDT — v0.6.1
+*(Most recent updates at top)*
+
+
+## v0.6.1 — Tray click fix
+
+**Tray icon: left-click now opens the app, not a text menu.**
+
+Previously left-clicking the menubar icon opened a native NSMenu listing
+recent sessions as text-only items. NSMenu can't show thumbnails or
+per-row Copy/Folder buttons, so the dropdown felt empty: the user
+couldn't actually DO anything from it beyond opening a session folder.
+
+Now:
+- **Left-click** → brings the main window forward, focused. You land on
+  the rich HistoryHub view (or your active session if one's running).
+- **Right-click** → still shows the native menu for the static actions
+  (Take Capture, Take Scrolling Capture, Open Captures Folder, Show
+  Onboarding, Reveal Logs, Save Diagnostic Bundle, Quit). The
+  "Recent sessions" submenu is preserved here too as a quick-folder-open
+  shortcut.
+
+**Tray menu auto-refreshes after End Session.** A new `refresh_tray`
+Tauri command is invoked from `SessionWindow.onNewSession` so a
+just-ended bundle shows up in the right-click submenu without an app
+restart.
+
+---
+
+
 ## Progress Update as of 2026-05-03 12:04 PDT — v0.6.0
 *(Most recent updates at top)*
 
