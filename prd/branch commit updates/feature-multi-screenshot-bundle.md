@@ -4,6 +4,30 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 09:45 PDT — v0.3.8 (Mic entitlement fix + version badge in chrome bar)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Two fixes shipped together. (1) Microphone permission still wasn't being granted in v0.3.7 even though `request_microphone_access` (which calls `AVCaptureDevice.requestAccessForMediaType:AVMediaTypeAudio` via the Objective-C bridge) WAS being called. Root cause: `src-tauri/entitlements.plist` was missing `com.apple.security.device.audio-input`, the entitlement that hardened-runtime apps signed with Developer ID need to authorize a mic-access request. Without it, the Apple SDK call silently returns false without prompting. Speech Recognition worked because it uses a different framework that doesn't require the same entitlement. (2) Added a small monospace `VersionBadge` component reading from `getVersion()` (Tauri API → tauri.conf.json) and wired it into the top-right of both the SessionWindow Header and the Onboarding title bar. Since `scripts/release.sh` already bumps tauri.conf.json's version on every release, the displayed version auto-increments — no build-script change needed.
+
+### Detail of changes made:
+
+- **`src-tauri/entitlements.plist`** — Added `<key>com.apple.security.device.audio-input</key><true/>`. This is the load-bearing fix for the mic prompt. Without this, `requestAccessForMediaType:AVMediaTypeAudio` silently no-ops and TCC database is never updated, so Vision|Pipe never appears in System Settings → Privacy → Microphone.
+- **`src/components/VersionBadge.tsx`** (new) — 30-line component using `useState` + `useEffect` to fetch version via `getVersion()` from `@tauri-apps/api/app`, rendering as `v0.3.8` in `FONT_MONO` size 10, color `C.textDim`. Returns null until the promise resolves so it doesn't flash empty content.
+- **`src/components/Header.tsx`** — Added VersionBadge import + placed it as the last child of the right-side action group (after the OverflowMenu `⋮`).
+- **`src/components/Onboarding.tsx`** — Added VersionBadge import + flexed the title-bar drag region to `space-between` so the brand stays on the left and the version sits on the right (with paddingRight: 12 for breathing room).
+- **No build-script change**: `scripts/release.sh` already bumps `tauri.conf.json` (the source for `getVersion()`) on every run, so the displayed version auto-tracks the latest build. Documented for clarity.
+
+### Potential concerns to address:
+
+- **The mic entitlement fix only takes effect for users running v0.3.8 or later** — anyone on v0.3.6 or v0.3.7 with mic still showing as denied/missing in TCC must (a) install v0.3.8, AND (b) `tccutil reset Microphone com.visionpipe.desktop` to clear any stale denied state, AND (c) quit + relaunch the app. Document this in the user-facing changelog.
+- **VersionBadge uses `@tauri-apps/api/app`'s getVersion** which is a runtime fetch (small async cost on mount). Alternative: import `name`/`version` from `package.json` at build time via Vite. The runtime approach is simpler and bypasses Vite's JSON-import quirks; the badge appears within ~1 frame in practice.
+- **Camera entitlement (`com.apple.security.device.camera`) is also missing** — would block any future video-capture features. Not needed for v0.3.8 scope but worth noting if camera ever lands.
+- **No automated test for the entitlements file** — content drift could break mic again. A simple shell test that `grep`s the entitlements during the release-script's pre-build phase would catch regressions.
+
+---
+
 ## Progress Update as of 2026-05-03 09:30 PDT — v0.3.6 (Fix mic + speech recognition onboarding buttons)
 *(Most recent updates at top)*
 

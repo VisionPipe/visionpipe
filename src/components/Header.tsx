@@ -1,5 +1,6 @@
 import { useSession } from "../state/session-context";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
+import { VersionBadge } from "./VersionBadge";
 
 export type NetworkState = "live" | "local-only" | "reconnecting";
 
@@ -77,6 +78,7 @@ export function Header(props: Props) {
           onOpenFolder={props.onOpenSessionFolder}
           onOpenSettings={props.onOpenSettings}
         />
+        <VersionBadge />
       </div>
     </header>
   );

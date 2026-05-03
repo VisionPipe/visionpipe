@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
 import type { PermissionStatus } from "../lib/permissions-types";
+import { VersionBadge } from "./VersionBadge";
 
 type SettingsPane =
   | "screen_recording"
@@ -89,7 +90,8 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
           style={{
             height: 28, background: C.deepForest,
             borderBottom: `1px solid ${C.border}`,
-            display: "flex", alignItems: "center", paddingLeft: 80,
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            paddingLeft: 80, paddingRight: 12,
           }}
         >
           <span style={{
@@ -97,6 +99,7 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
           }}>
             Vision<span style={{ color: C.teal }}>|</span>Pipe
           </span>
+          <VersionBadge />
         </div>
 
         <div style={{ flex: 1, padding: 24, overflowY: "auto", color: C.cream }}>
