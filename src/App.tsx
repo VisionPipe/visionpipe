@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionProvider, useSession } from "./state/session-context";
 import { MicProvider } from "./state/mic-context";
+import { MicOnboardingModal } from "./components/MicOnboardingModal";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
 import { IdleScreen } from "./components/IdleScreen";
@@ -39,6 +40,14 @@ function AppInner() {
   const recorderRef = useRef<RecorderHandle | null>(null);
   const [micRecording, setMicRecording] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+  // Mic + Speech Recognition permissions are deferred to the FIRST time
+  // the user clicks the mic button in the Header (see MicOnboardingModal).
+  // This preserves the no-fluff onboarding for silent-capture-only users
+  // while still surfacing the explainer for users who want voice notes.
+  const [micOnboardingShown, setMicOnboardingShown] = useState<boolean>(
+    () => localStorage.getItem("vp-mic-onboarded") === "1"
+  );
+  const [showMicModal, setShowMicModal] = useState(false);
 
   // ── Deepgram WebSocket lifecycle ──
   // Connects in parallel with the master recorder on first capture. Failure
@@ -244,6 +253,93 @@ function AppInner() {
     await win.hide();
   }, []);
 
+  // ── Initialize the session's audio recorder + Deepgram socket.
+  // Extracted from onCapture so the mic-onboarding modal can also call it
+  // mid-session: when the user finally clicks the mic button and grants,
+  // we wire up the recorder for the already-active session right then.
+  const initSessionAudio = useCallback(async () => {
+    if (recorderRef.current) return; // already initialized
+    try {
+      recorderRef.current = await createRecorder();
+      await recorderRef.current.start();
+      setMicRecording(true);
+
+      // Wire MediaRecorder chunks → Deepgram WebSocket. The dg client
+      // silently no-ops if its socket isn't OPEN yet, so we don't gate
+      // on connection state here.
+      recorderRef.current.onChunk((chunk) => {
+        dgRef.current?.send(chunk);
+      });
+
+      // Shared transcript-event handler used by initial connect + retry.
+      // Pulled into a closure so the retry path doesn't re-reference
+      // dispatch / sessionRef from a potentially stale snapshot.
+      const handleFinal = (text: string) => {
+        const withSpace = text + " ";
+        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
+          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: withSpace });
+        } else {
+          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: withSpace });
+        }
+      };
+
+      try {
+        const dg = await connectDeepgram();
+        dgRef.current = dg;
+        dg.onEvent((e: TranscriptEvent) => {
+          if (e.type === "open") {
+            setNetworkState("live");
+          } else if (e.type === "close" || e.type === "error") {
+            setNetworkState("reconnecting");
+            // One retry, then settle. Avoids reconnect storm.
+            setTimeout(async () => {
+              try {
+                const dg2 = await connectDeepgram();
+                dgRef.current = dg2;
+                dg2.onEvent((e2: TranscriptEvent) => {
+                  if (e2.type === "open") setNetworkState("live");
+                  else if (e2.type === "close" || e2.type === "error") setNetworkState("local-only");
+                  else if (e2.type === "final") handleFinal(e2.text);
+                });
+              } catch {
+                setNetworkState("local-only");
+              }
+            }, 3000);
+          } else if (e.type === "final") {
+            handleFinal(e.text);
+          }
+        });
+      } catch (err) {
+        console.warn("[VisionPipe] Deepgram connect failed (offline mode):", err);
+        setNetworkState("local-only");
+      }
+    } catch (err) {
+      console.warn("[VisionPipe] Mic permission denied or recorder init failed:", err);
+      setMicPermissionDenied(true);
+    }
+  }, [dispatch]);
+
+  // ── Mic onboarding modal: triggered the first time the user clicks the
+  // mic button (Header) without having granted mic + speech permissions.
+  // Records that the prompt has been shown so we don't re-prompt on every
+  // click. If the user grants, immediately wire up the recorder for the
+  // current session.
+  const onMicOnboardComplete = useCallback(async (granted: { microphone: boolean; speechRecognition: boolean }) => {
+    setShowMicModal(false);
+    localStorage.setItem("vp-mic-onboarded", "1");
+    setMicOnboardingShown(true);
+    if (granted.microphone) {
+      await initSessionAudio();
+    } else {
+      setMicPermissionDenied(true);
+    }
+  }, [initSessionAudio]);
+
+  const onMicOnboardSkip = useCallback(() => {
+    setShowMicModal(false);
+    // Don't persist; user can click the mic button again later to retry.
+  }, []);
+
   const onCapture = useCallback(async (pngBytes: Uint8Array) => {
     const metadata = await invoke<CaptureMetadata>("get_metadata");
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -261,79 +357,12 @@ function AppInner() {
           screenshots: [], closingNarration: "",
         },
       });
-      // Kick off the master audio recorder once per session. After a previous
-      // session ends, recorderRef is cleared (see onNewSession in
-      // SessionWindow), so this branch always creates a fresh handle here.
-      if (!recorderRef.current) {
-        try {
-          recorderRef.current = await createRecorder();
-          await recorderRef.current.start();
-          setMicRecording(true);
-
-          // ── Wire MediaRecorder chunks → Deepgram WebSocket ──
-          // The recorder fan-outs each 1s chunk to all listeners; we add a
-          // listener that forwards into the dg socket (the dg client itself
-          // silently no-ops if the socket isn't OPEN yet, so we don't have to
-          // gate on connection state here).
-          recorderRef.current.onChunk((chunk) => {
-            dgRef.current?.send(chunk);
-          });
-
-          // ── Shared transcript-event handler used by both the initial
-          // connect and the single retry attempt below. Pulled into a closure
-          // here so the retry path doesn't have to re-reference `dispatch` /
-          // `sessionRef` from a potentially stale snapshot.
-          const handleFinal = (text: string) => {
-            const withSpace = text + " ";
-            if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
-              dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: withSpace });
-            } else {
-              dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: withSpace });
-            }
-          };
-
-          // ── Connect Deepgram (best-effort) ──
-          // If the initial connect throws (no network, edge down, token
-          // issuance failed), settle straight into local-only — we don't
-          // bother with a retry storm; the user will start a new session if
-          // they want to try again. Mid-session drops get one retry after 3s,
-          // then settle into local-only permanently.
-          try {
-            const dg = await connectDeepgram();
-            dgRef.current = dg;
-            dg.onEvent((e: TranscriptEvent) => {
-              if (e.type === "open") {
-                setNetworkState("live");
-              } else if (e.type === "close" || e.type === "error") {
-                setNetworkState("reconnecting");
-                // One retry, then settle. Avoids reconnect storm.
-                setTimeout(async () => {
-                  try {
-                    const dg2 = await connectDeepgram();
-                    dgRef.current = dg2;
-                    dg2.onEvent((e2: TranscriptEvent) => {
-                      if (e2.type === "open") setNetworkState("live");
-                      else if (e2.type === "close" || e2.type === "error") setNetworkState("local-only");
-                      else if (e2.type === "final") handleFinal(e2.text);
-                      // interim events: skipped on the retry path for simplicity
-                    });
-                  } catch {
-                    setNetworkState("local-only");
-                  }
-                }, 3000);
-              } else if (e.type === "final") {
-                handleFinal(e.text);
-              }
-              // Interim events: skip for v0.2 (live preview = future polish)
-            });
-          } catch (err) {
-            console.warn("[VisionPipe] Deepgram connect failed (offline mode):", err);
-            setNetworkState("local-only");
-          }
-        } catch (err) {
-          console.warn("[VisionPipe] Mic permission denied or recorder init failed:", err);
-          setMicPermissionDenied(true);
-        }
+      // Kick off the master audio recorder + Deepgram only if the user has
+      // already gone through the (deferred) mic onboarding. Otherwise the
+      // session starts SILENT — the user can click the mic button later to
+      // trigger the onboarding modal and start recording mid-session.
+      if (micOnboardingShown && !recorderRef.current) {
+        await initSessionAudio();
       }
     }
 
@@ -404,8 +433,16 @@ function AppInner() {
     }
   }, [state.session]);
 
-  // ── Mic toggle (Header button) — pause/resume the master recorder ──
+  // ── Mic toggle (Header button) ──
+  // First click on a fresh install (or after sign-out): show the mic
+  // onboarding modal which triggers the macOS permission prompts. After
+  // grant, the recorder is wired up via onMicOnboardComplete →
+  // initSessionAudio. Subsequent clicks pause/resume the master recorder.
   const onToggleMic = useCallback(() => {
+    if (!micOnboardingShown) {
+      setShowMicModal(true);
+      return;
+    }
     if (!recorderRef.current) return;
     if (recorderRef.current.isRecording()) {
       recorderRef.current.pause();
@@ -414,7 +451,7 @@ function AppInner() {
       recorderRef.current.resume();
       setMicRecording(true);
     }
-  }, []);
+  }, [micOnboardingShown]);
 
   // ── Clear the recorder ref after SessionWindow flushes audio at session end.
   // Exposed via MicContext so SessionWindow's "New session" handler can null
@@ -495,6 +532,12 @@ function AppInner() {
       closeDeepgram,
     }}>
       {view}
+      {showMicModal && (
+        <MicOnboardingModal
+          onComplete={onMicOnboardComplete}
+          onSkip={onMicOnboardSkip}
+        />
+      )}
     </MicProvider>
   );
 }

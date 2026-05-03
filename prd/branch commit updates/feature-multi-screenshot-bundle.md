@@ -4,6 +4,40 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 10:00 PDT — v0.3.8 (Defer mic onboarding + welcome-card cleanup)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+User feedback on the v0.3.8 onboarding: mic + speech recognition were too prominent for a first-launch flow when most users want silent screenshot capture. Restructured so the main Onboarding card now only asks for the three required permissions (Screen Recording, System Events, Accessibility); mic + speech are deferred to a new MicOnboardingModal that pops up the first time the user clicks the mic button in the Header. Also polished the welcome-card all-granted screen per user spec: remove redundant copy, change "How to use" → "How to give your LLM eyes:", reduce the bullet list to a single line ("Press ⌘⇧C to capture your screen"), widen the keyboard-key glyphs to look square, and rename the dismiss button "Got it" → "Get Started".
+
+### Detail of changes made:
+
+- **`src/components/MicOnboardingModal.tsx`** (new, ~95 LOC): Modal with explainer copy ("Vision|Pipe can record voice narration alongside your captures and transcribe it"), Grant/Skip buttons. On Grant, sequentially invokes `request_microphone_access` + `request_speech_recognition` (the existing Tauri commands). Calls `onComplete({ microphone, speechRecognition })` either way; caller persists state.
+- **`src/components/Onboarding.tsx`**:
+  - Removed the Microphone + Speech Recognition `PermissionRow`s (and the now-unused `requestMic`/`requestSpeech` helper functions).
+  - Updated `allGranted` to require only the three core permissions; mic/speech no longer gate dismissal.
+  - Replaced the old "Grant the permissions below" copy with shorter "Grant the three permissions below and you'll be ready to capture." Added a small italic note: "Microphone & Speech Recognition are optional and will be requested the first time you click the microphone in the app."
+  - All-granted screen rewrite per user request: removed "Here's how to use Vision|Pipe:" subheader; renamed "How to use:" → "How to give your LLM eyes:"; replaced the 6-line bullet list with a single bullet "Press ⌘⇧C to capture your screen" (dropped drag-to-select, scrolling capture, Esc, annotation, paste-into-LLM lines + "Re-open this welcome..." footer note); renamed dismiss button "Got it" → "Get Started".
+  - Widened `KbdKey` horizontal padding (14px → 22px) and minWidth (28 → 32) to render glyphs roughly square instead of rectangle-tall, per user feedback.
+- **`src/App.tsx`**:
+  - Added `micOnboardingShown` state (initialized from `localStorage["vp-mic-onboarded"]`) and `showMicModal` state.
+  - Extracted the recorder + Deepgram init logic from inline `onCapture` into a reusable `initSessionAudio()` `useCallback` so the mic-onboarding modal completion handler can also call it (mid-session wire-up).
+  - Gated the inline recorder init in `onCapture`'s first-capture branch on `micOnboardingShown`. Sessions now start SILENT for users who haven't yet completed mic onboarding.
+  - Modified `onToggleMic`: if mic onboarding hasn't been done, opens the modal instead of toggling pause/resume.
+  - Added `onMicOnboardComplete` (persists localStorage flag, sets state, calls `initSessionAudio` if granted) and `onMicOnboardSkip` (just closes modal, doesn't persist — user can retry).
+  - Renders `<MicOnboardingModal>` conditionally at the tail of the MicProvider tree.
+
+### Potential concerns to address:
+
+- **Sessions taken before mic onboarding have NO audio recorded** — there's no recovery; if the user enables mic mid-session, the master `audio-master.webm` only covers from the moment of grant onward (not retroactively). Acceptable for a v0.2 feature but worth UI affordance later (e.g., a "this session has no audio because mic isn't enabled — enable it now?" banner).
+- **Mic indicator UI doesn't visually distinguish "not yet onboarded" from "paused"** — both render as the gray "Paused" pill. Future polish: separate state like "Click to enable voice notes".
+- **`micOnboardingShown` flag is per-machine localStorage** — if the user clears Safari data, signs out, or migrates to a new Mac, they'll see the modal again. Acceptable; the modal is short.
+- **No Cancel button on the modal during the request flow** — once the user clicks Grant, both requests fire sequentially with no abort. Each is fast (one macOS prompt each), so not a real issue.
+- **The "Maybe later" path doesn't persist `vp-mic-onboarded`** — by design, so the user can re-trigger via the mic button. But if they click mic→Skip repeatedly, the modal will keep appearing. Acceptable for now.
+
+---
+
 ## Progress Update as of 2026-05-03 10:00 PDT — v0.3.8 (Commit scrolling-capture source already shipped in v0.3.8 binary)
 *(Most recent updates at top)*
 
