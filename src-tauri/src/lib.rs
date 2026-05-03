@@ -7,6 +7,7 @@ use tauri::{
 
 mod audio;
 mod capture;
+mod hotkey_config;
 mod install_token;
 mod metadata;
 mod permissions;
@@ -148,6 +149,16 @@ async fn load_install_token() -> Result<Option<String>, String> {
     install_token::load_token()
 }
 
+#[tauri::command]
+async fn load_hotkey_config() -> hotkey_config::HotkeyConfig {
+    hotkey_config::load()
+}
+
+#[tauri::command]
+async fn save_hotkey_config(cfg: hotkey_config::HotkeyConfig) -> Result<(), String> {
+    hotkey_config::save(&cfg)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -205,9 +216,11 @@ pub fn run() {
                 }
             })?;
 
-            // Cmd+Shift+C — start capture
+            // Configurable global capture shortcut (default Cmd+Shift+C)
+            let cfg = hotkey_config::load();
+            let global_combo = cfg.take_next_screenshot.clone();
             let app_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+C", move |_app, _shortcut, event| {
+            app.global_shortcut().on_shortcut(global_combo.as_str(), move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
                     eprintln!("[VisionPipe] Shortcut triggered!");
                     if let Some(window) = app_handle.get_webview_window("main") {
@@ -255,6 +268,8 @@ pub fn run() {
             move_to_deleted,
             save_install_token,
             load_install_token,
+            load_hotkey_config,
+            save_hotkey_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
