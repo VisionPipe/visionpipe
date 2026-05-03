@@ -1,8 +1,8 @@
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
-    Emitter,
-    Manager,
+    tray::{TrayIcon, TrayIconBuilder},
+    AppHandle, Emitter, Manager,
 };
 
 mod audio;
@@ -13,6 +13,134 @@ mod metadata;
 mod permissions;
 mod session;
 mod speech;
+
+/// Shared state mapping tray-menu ID `recent_<N>` → file path on disk.
+/// Updated whenever we rebuild the tray menu (on launch + after each
+/// capture). Lock held briefly during click dispatch.
+struct RecentCapturesState(Mutex<Vec<String>>);
+
+/// List the up-to-5 most recent .png files in ~/Pictures/VisionPipe/
+/// sorted by mtime descending. Returns (display_label, full_path) pairs.
+/// `display_label` is a human-readable timestamp like "2:42 PM (region)".
+fn list_recent_captures() -> Vec<(String, String)> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let dir = format!("{}/Pictures/VisionPipe", home);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) != Some("png") {
+                return None;
+            }
+            let mtime = e.metadata().ok().and_then(|m| m.modified().ok())?;
+            Some((mtime, p))
+        })
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.truncate(5);
+
+    files
+        .into_iter()
+        .map(|(mtime, path)| {
+            let label = format_capture_label(&path, mtime);
+            (label, path.to_string_lossy().to_string())
+        })
+        .collect()
+}
+
+/// Format a capture filename + mtime into a friendly menu label.
+/// Filenames look like `VisionPipe_2026-05-03_09-42-13.png`.
+fn format_capture_label(path: &std::path::Path, mtime: std::time::SystemTime) -> String {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("capture");
+    // Use the local time of last modification as the display.
+    let dt: chrono::DateTime<chrono::Local> = mtime.into();
+    let now = chrono::Local::now();
+    let same_day = dt.date_naive() == now.date_naive();
+    let time_part = dt.format("%-I:%M %p").to_string();
+    if same_day {
+        format!("Today at {}", time_part)
+    } else {
+        format!("{} at {}", dt.format("%b %-d").to_string(), time_part)
+    }
+    .clone()
+    + &format!(" — {}", name.trim_end_matches(".png").trim_start_matches("VisionPipe_"))
+}
+
+/// Build the tray menu from the current recent-captures list.
+fn build_tray_menu(
+    app: &AppHandle,
+    recents: &[(String, String)],
+) -> Result<Menu<tauri::Wry>, tauri::Error> {
+    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+
+    if recents.is_empty() {
+        let label = MenuItem::with_id(
+            app,
+            "no_recents",
+            "No recent captures yet",
+            false,
+            None::<&str>,
+        )?;
+        items.push(Box::new(label));
+    } else {
+        let header = MenuItem::with_id(app, "recents_header", "Recent captures", false, None::<&str>)?;
+        items.push(Box::new(header));
+        for (i, (label, _path)) in recents.iter().enumerate() {
+            let id = format!("recent_{}", i);
+            let mi = MenuItem::with_id(app, &id, format!("  {}", label), true, None::<&str>)?;
+            items.push(Box::new(mi));
+        }
+    }
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    items.push(Box::new(MenuItem::with_id(
+        app, "take_capture", "Take Capture (⌘⇧C)", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "take_scrolling_capture", "Take Scrolling Capture (⌘⇧S)", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "open_captures_folder", "Open Captures Folder…", true, None::<&str>,
+    )?));
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    items.push(Box::new(MenuItem::with_id(
+        app, "show_onboarding", "Show Onboarding…", true, None::<&str>,
+    )?));
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+    items.push(Box::new(PredefinedMenuItem::quit(app, Some("Quit Vision|Pipe"))?));
+
+    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        items.iter().map(|b| b.as_ref()).collect();
+    Menu::with_items(app, &item_refs)
+}
+
+/// Rebuild the tray menu from the current filesystem state and replace
+/// the tray's menu in-place. Also updates the shared `RecentCapturesState`
+/// so click dispatch uses the same path list the menu was built from.
+fn refresh_tray_menu(app: &AppHandle) {
+    let recents = list_recent_captures();
+
+    if let Some(state) = app.try_state::<RecentCapturesState>() {
+        if let Ok(mut paths) = state.0.lock() {
+            *paths = recents.iter().map(|(_, p)| p.clone()).collect();
+        }
+    }
+
+    if let Ok(menu) = build_tray_menu(app, &recents) {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
@@ -51,7 +179,7 @@ async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
 /// Save PNG bytes to ~/Pictures/VisionPipe/ and set clipboard to the file
 /// so it can be pasted into Finder, desktop, and image-accepting apps.
 #[tauri::command]
-async fn save_and_copy_image(png_bytes: Vec<u8>) -> Result<String, String> {
+async fn save_and_copy_image(app: AppHandle, png_bytes: Vec<u8>) -> Result<String, String> {
     use std::fs;
     use std::process::Command;
 
@@ -108,6 +236,9 @@ pb.writeObjects($.NSArray.arrayWithObject(item));"#,
             )])
             .status();
     }
+
+    // Refresh the tray menu so the new capture appears in "Recent captures".
+    refresh_tray_menu(&app);
 
     Ok(filepath)
 }
@@ -192,21 +323,68 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let separator = PredefinedMenuItem::separator(app)?;
-            let quit = PredefinedMenuItem::quit(app, Some("Quit VisionPipe"))?;
-            let menu = Menu::with_items(app, &[&show_onboarding, &separator, &quit])?;
+            let _ = show_onboarding; // kept for type elaboration; real menu is built below
 
-            let _tray = TrayIconBuilder::new()
+            // Initial tray-menu build with current filesystem state, plus
+            // shared mutex of recent paths so click dispatch can resolve
+            // `recent_<N>` IDs back to the actual file path.
+            app.manage(RecentCapturesState(Mutex::new(Vec::new())));
+            let initial_recents = list_recent_captures();
+            if let Some(state) = app.try_state::<RecentCapturesState>() {
+                if let Ok(mut paths) = state.0.lock() {
+                    *paths = initial_recents.iter().map(|(_, p)| p.clone()).collect();
+                }
+            }
+            let menu = build_tray_menu(app.handle(), &initial_recents)?;
+
+            let _tray = TrayIconBuilder::with_id("main")
                 .tooltip("VisionPipe")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| {
-                    if event.id.as_ref() == "show_onboarding" {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                            let _ = window.emit("show-onboarding", ());
+                    let id = event.id.as_ref();
+                    match id {
+                        "show_onboarding" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.emit("show-onboarding", ());
+                            }
                         }
+                        "take_capture" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.emit("start-capture", "tray");
+                            }
+                        }
+                        "take_scrolling_capture" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.emit("start-scroll-capture", "tray");
+                            }
+                        }
+                        "open_captures_folder" => {
+                            if let Ok(home) = std::env::var("HOME") {
+                                let dir = format!("{}/Pictures/VisionPipe", home);
+                                let _ = std::fs::create_dir_all(&dir);
+                                let _ = std::process::Command::new("open").arg(&dir).status();
+                            }
+                        }
+                        _ if id.starts_with("recent_") => {
+                            // recent_<N>: open Nth file from RecentCapturesState
+                            if let Some(rest) = id.strip_prefix("recent_") {
+                                if let Ok(idx) = rest.parse::<usize>() {
+                                    if let Some(state) = app.try_state::<RecentCapturesState>() {
+                                        if let Ok(paths) = state.0.lock() {
+                                            if let Some(path) = paths.get(idx) {
+                                                let _ = std::process::Command::new("open")
+                                                    .arg(path)
+                                                    .status();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;

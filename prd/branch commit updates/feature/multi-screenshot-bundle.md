@@ -4,6 +4,38 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 10:33 PDT — v0.4.3
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+The menu-bar tray icon (top of the macOS menu bar) now actually does something useful when clicked. Previously it had just "Show Onboarding" and "Quit" — now it lists your last 5 captures (clicking one opens it in Preview) and adds quick-access items for taking a new capture without the keyboard shortcut. Tray menu auto-refreshes after every capture so the recent list is always current.
+
+### Detail of changes made:
+
+- **`src-tauri/src/lib.rs`** — Added `list_recent_captures()` helper that scans `~/Pictures/VisionPipe/` for `.png` files, sorts by mtime descending, and returns the top 5 with friendly labels like `Today at 9:42 AM — 2026-05-03_09-42-13`. Added `build_tray_menu(app, recents)` that constructs the menu dynamically. Added `refresh_tray_menu(app)` that rebuilds the menu and updates the shared `RecentCapturesState` mutex.
+- **`src-tauri/src/lib.rs`** — Tray menu now contains:
+  - **Recent captures** section (or "No recent captures yet" if folder is empty) — each item opens the file in Preview when clicked
+  - **Take Capture (⌘⇧C)** — emits `start-capture` to the frontend so users can trigger a capture from the menu bar without remembering the hotkey
+  - **Take Scrolling Capture (⌘⇧S)** — same, for the new scrolling mode
+  - **Open Captures Folder…** — opens `~/Pictures/VisionPipe/` in Finder
+  - **Show Onboarding…** (existing)
+  - **Quit Vision|Pipe** (existing)
+- **`src-tauri/src/lib.rs`** — Tray icon is now built with `TrayIconBuilder::with_id("main")` so we can look it up later via `app.tray_by_id("main")` and replace its menu when captures change.
+- **`src-tauri/src/lib.rs`** — `save_and_copy_image` now takes an `AppHandle` parameter and calls `refresh_tray_menu(&app)` after writing the new PNG, so the tray menu's Recent captures list updates in real time.
+- **`RecentCapturesState`** — new shared mutex of `Vec<String>` (file paths) keyed by ID. The on-menu-event handler resolves `recent_<N>` IDs back to paths via this state, since menu IDs are static strings and we want the click target to update with the menu.
+
+### Potential concerns to address:
+
+- **No persistent app log file yet**: deferred to next patch (was going to bundle here but the tray work alone was substantial). Plan: add `tauri-plugin-log` so JS console output goes to a real file at `~/Library/Logs/com.visionpipe.desktop/visionpipe.log`, plus tray menu items "Reveal Logs in Finder" and "Save Diagnostic Bundle".
+- **Recent captures show by mtime, not session**: a user who renames or copies an old PNG into `~/Pictures/VisionPipe/` could push real captures off the list. Acceptable; that folder is Vision|Pipe's domain.
+- **Refresh fires after every save**: cheap (just lists 5 files + rebuilds a small menu) but if we ever did rapid sequential captures, the rebuilds would chain. Not worth optimizing.
+- **Tray menu items are not localized**: "Today at 9:42 AM" uses English month names + AM/PM. Same as everywhere else in the app — i18n is a future concern.
+- **Parallel-agent coordination**: the merge-best-of-both work stream and another agent doing multi-screenshot-bundle work both touch `lib.rs` and `App.tsx`. Pulled latest before this build (was clean). Future builds should keep doing that.
+
+---
+
+
 ## Progress Update as of 2026-05-03 09:54 PDT — v0.4.1
 *(Most recent updates at top)*
 
