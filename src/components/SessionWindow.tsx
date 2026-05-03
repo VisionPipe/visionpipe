@@ -107,7 +107,15 @@ export function SessionWindow() {
   };
 
   const requestRerecord = (seq: number) => {
-    // Phase E adds the actual modal; for now just notify.
+    // Gate through mic onboarding: if user hasn't granted mic + speech
+    // permissions yet, show the educational MicOnboardingModal first
+    // instead of opening ReRecordModal (which would just call
+    // getUserMedia directly and let macOS prompt with no context).
+    const onboarded = localStorage.getItem("vp-mic-onboarded") === "1";
+    if (!onboarded) {
+      window.dispatchEvent(new CustomEvent("vp-show-mic-modal"));
+      return;
+    }
     window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq } }));
   };
 

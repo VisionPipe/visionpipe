@@ -149,6 +149,16 @@ function AppInner() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  // ── Listen for "show mic onboarding modal" event ──
+  // Dispatched by SessionWindow when the user clicks the per-card
+  // Re-record button before completing mic onboarding. Routes the user
+  // through the same explainer flow as the Header pill click.
+  useEffect(() => {
+    const handler = () => setShowMicModal(true);
+    window.addEventListener("vp-show-mic-modal", handler);
+    return () => window.removeEventListener("vp-show-mic-modal", handler);
+  }, []);
+
   // ── Listen for the in-app "Take next screenshot" trigger from SessionWindow ──
   // Unlike the Rust global-shortcut path (which resizes the window to
   // fullscreen before firing start-capture), the in-app "+" button fires
@@ -277,71 +287,47 @@ function AppInner() {
     await win.hide();
   }, []);
 
-  // ── Initialize the session's audio recorder + Deepgram socket.
-  // Extracted from onCapture so the mic-onboarding modal can also call it
-  // mid-session: when the user finally clicks the mic button and grants,
-  // we wire up the recorder for the already-active session right then.
+  // ── Initialize the session's audio recorder for on-device transcription.
+  // v0.5.2: switched from MediaRecorder + Deepgram (cloud) to Rust cpal +
+  // Apple SFSpeechRecognizer (on-device). Each screenshot's narration is
+  // whatever was recorded between that screenshot and the next (or session
+  // end). Per-segment batch transcription removes the vp-edge proxy
+  // dependency entirely.
+  //
+  // Real-time streaming via Deepgram is preserved as `connectDeepgram` in
+  // src/lib/deepgram-client.ts and the wiring is in git history; future
+  // build can re-enable behind a Settings toggle ("Real-time transcription
+  // (cloud)" vs "On-device (default)").
   const initSessionAudio = useCallback(async () => {
-    if (recorderRef.current) return; // already initialized
     try {
-      recorderRef.current = await createRecorder();
-      await recorderRef.current.start();
+      // Start the cpal recording for the FIRST segment of this session.
+      // stop_recording_and_transcribe will be called at the next screenshot
+      // boundary, returning the transcript of that segment which we'll
+      // dispatch into the just-finished screenshot's transcriptSegment.
+      await invoke("start_recording");
       setMicRecording(true);
-
-      // Wire MediaRecorder chunks → Deepgram WebSocket. The dg client
-      // silently no-ops if its socket isn't OPEN yet, so we don't gate
-      // on connection state here.
-      recorderRef.current.onChunk((chunk) => {
-        dgRef.current?.send(chunk);
-      });
-
-      // Shared transcript-event handler used by initial connect + retry.
-      // Pulled into a closure so the retry path doesn't re-reference
-      // dispatch / sessionRef from a potentially stale snapshot.
-      const handleFinal = (text: string) => {
-        const withSpace = text + " ";
-        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
-          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: withSpace });
-        } else {
-          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: withSpace });
-        }
-      };
-
-      try {
-        const dg = await connectDeepgram();
-        dgRef.current = dg;
-        dg.onEvent((e: TranscriptEvent) => {
-          if (e.type === "open") {
-            setNetworkState("live");
-          } else if (e.type === "close" || e.type === "error") {
-            setNetworkState("reconnecting");
-            // One retry, then settle. Avoids reconnect storm.
-            setTimeout(async () => {
-              try {
-                const dg2 = await connectDeepgram();
-                dgRef.current = dg2;
-                dg2.onEvent((e2: TranscriptEvent) => {
-                  if (e2.type === "open") setNetworkState("live");
-                  else if (e2.type === "close" || e2.type === "error") setNetworkState("local-only");
-                  else if (e2.type === "final") handleFinal(e2.text);
-                });
-              } catch {
-                setNetworkState("local-only");
-              }
-            }, 3000);
-          } else if (e.type === "final") {
-            handleFinal(e.text);
-          }
-        });
-      } catch (err) {
-        console.warn("[VisionPipe] Deepgram connect failed (offline mode):", err);
-        setNetworkState("local-only");
-      }
+      setNetworkState("local-only"); // not really "offline" — just on-device
     } catch (err) {
-      console.warn("[VisionPipe] Mic permission denied or recorder init failed:", err);
+      console.warn("[VisionPipe] start_recording failed (mic permission?):", err);
       setMicPermissionDenied(true);
     }
-  }, [dispatch]);
+  }, []);
+
+  // ── Stop the current segment's recording and transcribe it.
+  // Returns the transcript text (may be empty if nothing captured).
+  // Called at every screenshot boundary AND at session-end / new-session.
+  const stopAndTranscribeCurrentSegment = useCallback(async (): Promise<string> => {
+    if (!micRecording) return "";
+    try {
+      const transcript = await invoke<string>("stop_recording");
+      setMicRecording(false);
+      return transcript ?? "";
+    } catch (err) {
+      console.warn("[VisionPipe] stop_recording failed:", err);
+      setMicRecording(false);
+      return "";
+    }
+  }, [micRecording]);
 
   // ── Mic onboarding modal: triggered the first time the user clicks the
   // mic button (Header) without having granted mic + speech permissions.
@@ -375,7 +361,8 @@ function AppInner() {
     const sessionId = state.session?.id ?? ts;
 
     let folder = state.session?.folder;
-    if (!state.session) {
+    const isFirstCapture = !state.session;
+    if (isFirstCapture) {
       folder = await invoke<string>("create_session_folder", { sessionId });
       const defaultView = (localStorage.getItem("vp-default-view") as "interleaved" | "split" | null) ?? "interleaved";
       dispatch({
@@ -386,12 +373,29 @@ function AppInner() {
           screenshots: [], closingNarration: "",
         },
       });
-      // Kick off the master audio recorder + Deepgram only if the user has
-      // already gone through the (deferred) mic onboarding. Otherwise the
-      // session starts SILENT — the user can click the mic button later to
-      // trigger the onboarding modal and start recording mid-session.
-      if (micOnboardingShown && !recorderRef.current) {
+      // Kick off the on-device recording for the first segment, only if
+      // the user has already gone through the (deferred) mic onboarding.
+      // Otherwise sessions start SILENT — user can click the mic button
+      // later to trigger the modal and start recording mid-session.
+      if (micOnboardingShown) {
         await initSessionAudio();
+      }
+    } else if (micRecording) {
+      // SECOND-OR-LATER capture: stop the segment that was being recorded
+      // for the LAST screenshot, transcribe it, and append the result to
+      // that screenshot's narration. Then start a fresh segment for the
+      // new screenshot.
+      const transcript = await stopAndTranscribeCurrentSegment();
+      if (transcript.trim()) {
+        dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
+      }
+      // Restart recording for the new segment (will be transcribed at the
+      // next boundary).
+      try {
+        await invoke("start_recording");
+        setMicRecording(true);
+      } catch (err) {
+        console.warn("[VisionPipe] start_recording (next segment) failed:", err);
       }
     }
 
@@ -409,9 +413,9 @@ function AppInner() {
       seq, canonicalName, capturedAt: new Date().toISOString(),
       audioOffset: { start: 0, end: null }, // reducer overwrites .start using audioElapsedSec; placeholder safe
       caption: "", transcriptSegment: "", reRecordedAudio: null,
-      metadata, offline: networkState !== "live",
+      metadata, offline: false, // on-device transcription is never "offline"
     };
-    dispatch({ type: "APPEND_SCREENSHOT", screenshot, audioElapsedSec: recorderRef.current?.elapsedSec() ?? 0 });
+    dispatch({ type: "APPEND_SCREENSHOT", screenshot, audioElapsedSec: 0 });
 
     setMode("session");
     const win = getCurrentWindow();
@@ -448,7 +452,7 @@ function AppInner() {
     } catch (err) {
       console.error("[VisionPipe] session window resize failed:", err);
     }
-  }, [state.session, dispatch]);
+  }, [state.session, dispatch, micOnboardingShown, micRecording, initSessionAudio, stopAndTranscribeCurrentSegment]);
 
   const onCancelCapture = useCallback(async () => {
     if (state.session) {
@@ -465,34 +469,60 @@ function AppInner() {
   // ── Mic toggle (Header button) ──
   // First click on a fresh install (or after sign-out): show the mic
   // onboarding modal which triggers the macOS permission prompts. After
-  // grant, the recorder is wired up via onMicOnboardComplete →
-  // initSessionAudio. Subsequent clicks pause/resume the master recorder.
-  const onToggleMic = useCallback(() => {
+  // grant, recording starts via onMicOnboardComplete → initSessionAudio.
+  // Subsequent clicks toggle the cpal session-level recording on/off.
+  // (When toggled off mid-session, no transcript is produced for the
+  // partial segment — user can manually type narration.)
+  const onToggleMic = useCallback(async () => {
     if (!micOnboardingShown) {
       setShowMicModal(true);
       return;
     }
-    if (!recorderRef.current) return;
-    if (recorderRef.current.isRecording()) {
-      recorderRef.current.pause();
-      setMicRecording(false);
+    if (micRecording) {
+      // Pause: stop + (optionally transcribe) the current segment
+      const transcript = await stopAndTranscribeCurrentSegment();
+      if (transcript.trim()) {
+        // Append to last screenshot (or closing narration if no screenshots)
+        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
+          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: transcript + " " });
+        } else {
+          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
+        }
+      }
     } else {
-      recorderRef.current.resume();
-      setMicRecording(true);
+      // Resume: start a fresh recording segment
+      try {
+        await invoke("start_recording");
+        setMicRecording(true);
+      } catch (err) {
+        console.warn("[VisionPipe] mic-toggle start_recording failed:", err);
+      }
     }
-  }, [micOnboardingShown]);
+  }, [micOnboardingShown, micRecording, stopAndTranscribeCurrentSegment, dispatch]);
 
   // ── Clear the recorder ref after SessionWindow flushes audio at session end.
-  // Exposed via MicContext so SessionWindow's "New session" handler can null
-  // out the ref here, ensuring the next first-capture creates a fresh handle.
-  const clearRecorder = useCallback(() => {
+  // Stops any in-progress recording AND drains the final segment's transcript
+  // into the last screenshot or closing narration. Exposed via MicContext so
+  // SessionWindow's "New session" handler can finalize before END_SESSION.
+  const clearRecorder = useCallback(async () => {
+    if (micRecording) {
+      const transcript = await stopAndTranscribeCurrentSegment();
+      if (transcript.trim()) {
+        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
+          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: transcript + " " });
+        } else {
+          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
+        }
+      }
+    }
     recorderRef.current = null;
     setMicRecording(false);
-  }, []);
+  }, [micRecording, stopAndTranscribeCurrentSegment, dispatch]);
 
-  // ── Close the Deepgram WebSocket and reset network state.
-  // Exposed via MicContext so SessionWindow's "New session" handler can tear
-  // down the live transcription stream alongside the master recorder.
+  // ── No-op now that the Deepgram path is disabled (v0.5.2 → on-device).
+  // Kept for MicContext API stability so SessionWindow doesn't need to
+  // change its prop wiring. Re-enable when Deepgram is added back behind
+  // a Settings toggle.
   const closeDeepgram = useCallback(() => {
     dgRef.current?.close();
     dgRef.current = null;
