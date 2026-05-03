@@ -4,6 +4,62 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 11:55 PDT — v0.6.0 (In-app History hub, tray-menu sessions, ReRecord cpal, dead-code removal)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Big new feature plus the cleanup work the user explicitly called out as deferred. (1) **HistoryHub** — when Vision|Pipe is active and no session is in progress, the window now stays visible and shows a list of recent screenshot bundles (was previously a hidden window — felt like the app had quit). Each row has 3 thumbnails, a friendly label ("Today at 9:42 AM · 3 screenshots"), and the first caption / transcript snippet. Click expands to show the full thumbnail grid + folder path. Per-row Copy button replays the same `save_and_copy_markdown` flow as the in-session Copy & Send (transcript.md + dual text+file clipboard). Per-row "Show in Finder" selects transcript.md (drag from there into Claude Code). "+ New Screenshot Bundle" header button triggers the standard capture pipeline. After "End Session" or onboarding dismiss, the user lands here. (2) **Tray menu now shows recent SESSIONS** instead of individual PNG files — `RecentCapturesState` → `RecentSessionsState`, tray IDs `recent_<N>` → `session_<N>`, click opens session folder in Finder. (3) **ReRecordModal ported to cpal** — was still using the deleted MediaRecorder + saving a separate `<canonicalName>-rerecord.webm` file. Now pauses master mic via `clearRecorder` (drains the in-flight transcript so nothing is lost), starts a fresh cpal segment, and on Stop replaces the screenshot's `transcriptSegment` text outright via the existing `UPDATE_TRANSCRIPT_SEGMENT` reducer. (4) **Dead-code removal** — deleted `src/lib/deepgram-client.ts` (unused since v0.5.2 on-device switch), deleted `src/lib/audio-recorder.ts` (MediaRecorder wrapper, last consumer was ReRecordModal), removed `recorder` field from MicContext, simplified SessionWindow's `onNewSession` (no more webm blob write).
+
+### Detail of changes made:
+
+- `src-tauri/src/lib.rs`:
+  - Renamed `RecentCapturesState` → `RecentSessionsState` (now holds session folder paths).
+  - Refactored `build_tray_menu` to take `&[SessionSummary]` and emit `session_<idx>` IDs.
+  - `refresh_tray_menu` now uses `list_recent_sessions(10)` (was `list_recent_captures()`, which no longer exists).
+  - Tray click handler resolves `session_<N>` → folder path → `open <folder>` (selects in Finder).
+  - Wired `list_recent_sessions_cmd`, `reveal_in_finder`, `read_session_file` into the invoke_handler list.
+  - Added `read_session_file` Tauri command (reads `<folder>/<filename>` as bytes — used by HistoryHub to pull `transcript.json` for re-rendering markdown when transcript.md doesn't exist on disk).
+- `src/components/HistoryHub.tsx` (new, 250+ lines):
+  - Loads sessions via `list_recent_sessions_cmd({limit: 50})` on mount + after Copy.
+  - Renders a header with "+ New Screenshot Bundle" CTA + "or press ⌘⇧C from anywhere" hint.
+  - Each row: chevron + 3 thumbnails (`convertFileSrc` for the asset:// URLs covered by the existing `$PICTURE/VisionPipe/**` scope) + label + caption/snippet + Copy button + Folder button.
+  - Expand toggles a Set<string> of session IDs; expanded view shows full thumbnail grid + folder path.
+  - Copy: prefers existing transcript.md if present; otherwise reads transcript.json + re-renders via existing `markdown-renderer.ts`. Either way calls `save_and_copy_markdown` for the same dual text+file clipboard behavior.
+  - 3s toast for Copy success/failure (same pattern as SessionWindow).
+- `src/App.tsx`:
+  - Removed dead Deepgram + audio-recorder imports.
+  - Removed `recorderRef` (cpal lives in Rust as a global singleton; no JS-side handle to track).
+  - `dgRef` removed; `networkState` kept (Header indicator API unchanged) but const at "local-only".
+  - `closeDeepgram` simplified to a true no-op (kept for MicContext API stability).
+  - `clearRecorder` simplified — no `recorderRef.current = null` line.
+  - `beforeunload` handler now just `void clearRecorder()` instead of stopping a JS recorder + writing a webm.
+  - New `resizeForHistoryHub` callback (centered ~55%×75% of monitor, with min/max caps) reused by `dismissOnboarding`, `onCancelCapture` (no-session branch), and the post-END_SESSION effect.
+  - View routing: `state.session ? <SessionWindow /> : <HistoryHub />` (was `IdleScreen`).
+  - New effect: when state.session becomes null while mode is "session", reset mode to "idle" + resize for HistoryHub. Without this, mode would stay at "session" after END_SESSION and the global ⌘⇧C hotkey gate (which only fires when `mode === "idle"`) would block re-capture.
+  - `onCancelCapture` no longer hides the window in the no-session branch — keeps it visible so the user lands on HistoryHub instead of the app appearing to vanish.
+- `src/components/ReRecordModal.tsx`: rewrote to use `invoke("start_recording")` / `invoke("stop_recording")`. Calls `mic.clearRecorder()` first to free cpal's single-recording slot. On Stop, dispatches `UPDATE_TRANSCRIPT_SEGMENT` (existing reducer action) to replace the screenshot's transcript text. New three-phase UI (starting → recording → stopping) with explicit Cancel + Stop & Save buttons; error path shows the Rust error string + a Close button instead of crashing.
+- `src/components/SessionWindow.tsx`: `onNewSession` simplified — no more `mic.recorder.stop()` + webm write (those refs were removed from MicContext). Just `await mic.clearRecorder()` + END_SESSION.
+- `src/state/mic-context.tsx`: dropped the `recorder: RecorderHandle | null` field (also removed the import). `clearRecorder` typed as `() => Promise<void>` (was `() => void`).
+- Deleted: `src/lib/deepgram-client.ts`, `src/lib/audio-recorder.ts`, `src/components/IdleScreen.tsx`.
+
+### Verification:
+- `cargo check` — clean (only pre-existing warnings unrelated to this work).
+- `pnpm tsc --noEmit` — clean.
+- `pnpm test --run` — 22/22 passing.
+
+### What still works the same way:
+- Onboarding flow, mic + speech permission deferral, ⌘⇧C hotkey, ⌘⇧S scrolling capture.
+- SessionWindow attached/detached views, paired-row alignment, click-to-expand image, double-click lightbox.
+- Copy & Send (transcript.md + dual text+file clipboard).
+- Per-segment on-device transcription via cpal + SFSpeech.
+
+### Known follow-ups (still deferred):
+- True streaming (real-time) transcripts during a session — requires Obj-C SFSpeechAudioBufferRecognitionRequest wiring; current model is per-segment batch.
+- Drag-out-of-window file drop into Claude Code — Tauri 2 doesn't have this API yet; for now users go through Finder via the row's Folder button.
+
+---
+
 ## Progress Update as of 2026-05-03 11:15 PDT — v0.5.2 (On-device transcription, click-to-expand image, detached-view rewrite, Re-record gating)
 *(Most recent updates at top)*
 

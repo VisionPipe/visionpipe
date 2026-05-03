@@ -7,10 +7,8 @@ import { MicProvider } from "./state/mic-context";
 import { MicOnboardingModal } from "./components/MicOnboardingModal";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
-import { IdleScreen } from "./components/IdleScreen";
+import { HistoryHub } from "./components/HistoryHub";
 import { Onboarding } from "./components/Onboarding";
-import { createRecorder, type RecorderHandle } from "./lib/audio-recorder";
-import { connectDeepgram, type DeepgramClient, type TranscriptEvent } from "./lib/deepgram-client";
 import { generateCanonicalName } from "./lib/canonical-name";
 import type { PermissionStatus } from "./lib/permissions-types";
 import type { CaptureMetadata, Screenshot } from "./types/session";
@@ -31,13 +29,11 @@ function AppInner() {
   const modeRef = useRef<AppMode>("onboarding");
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // ── Master audio recorder lifecycle ──
-  // The recorder is created lazily on first capture (so we don't request mic
-  // permission until the user actually begins a session). Stored as a ref
-  // because we mutate it from async callbacks; mirrored into React state
-  // (`micRecording`) for UI updates. After END_SESSION the ref is cleared so
-  // the next first-capture branch creates a fresh recorder.
-  const recorderRef = useRef<RecorderHandle | null>(null);
+  // ── Master audio recorder lifecycle (cpal, on-device) ──
+  // We don't hold a JS-side handle anymore — the recorder lives in Rust as
+  // a global singleton (see audio.rs). React tracks only whether it's
+  // active so the UI mic icon and capture-flow gates can react. After
+  // END_SESSION there's nothing JS-side to clear.
   const [micRecording, setMicRecording] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
   // Mic + Speech Recognition permissions are deferred to the FIRST time
@@ -49,15 +45,12 @@ function AppInner() {
   );
   const [showMicModal, setShowMicModal] = useState(false);
 
-  // ── Deepgram WebSocket lifecycle ──
-  // Connects in parallel with the master recorder on first capture. Failure
-  // (or a mid-session drop after one retry) flips us into `local-only` mode
-  // and any new screenshots taken in that state are stamped `offline: true`.
-  // `sessionRef` mirrors `state.session` so the async `dg.onEvent` callback
-  // (closure-captured at connect time) always sees the latest screenshot list
-  // when deciding whether to append to the active segment vs. closing narration.
-  const dgRef = useRef<DeepgramClient | null>(null);
-  const [networkState, setNetworkState] = useState<NetworkState>("local-only");
+  // networkState is fixed to "local-only" since the v0.5.2 switch from
+  // Deepgram (cloud streaming) to Apple SFSpeechRecognizer (on-device
+  // batch). Kept as state so the Header indicator API doesn't change; if
+  // we re-enable cloud streaming behind a Settings toggle, this flips
+  // back to "online" / "offline" / "local-only".
+  const [networkState] = useState<NetworkState>("local-only");
   const sessionRef = useRef(state.session);
   useEffect(() => { sessionRef.current = state.session; }, [state.session]);
 
@@ -116,6 +109,49 @@ function AppInner() {
     });
     return () => { unlisten.then(fn => fn()); };
   }, [showOnboardingWindow]);
+
+  // Resize to a HistoryHub-friendly window size centered on the current
+  // monitor. Used when transitioning into the idle/HistoryHub view from
+  // (a) onboarding dismissal, (b) selection-cancel, (c) end-session.
+  // Defined here (not later in the file) because the post-END_SESSION
+  // effect right below needs to reference it.
+  const resizeForHistoryHub = useCallback(async () => {
+    const win = getCurrentWindow();
+    try {
+      const { currentMonitor } = await import("@tauri-apps/api/window");
+      const monitor = await currentMonitor();
+      if (monitor) {
+        const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+        const scale = monitor.scaleFactor ?? 1;
+        const monitorW = monitor.size.width;
+        const monitorH = monitor.size.height;
+        const targetW = Math.max(Math.round(900 * scale), Math.min(Math.round(1400 * scale), Math.round(monitorW * 0.55)));
+        const targetH = Math.max(Math.round(640 * scale), Math.min(Math.round(900 * scale), Math.round(monitorH * 0.75)));
+        const targetX = monitor.position.x + Math.round((monitorW - targetW) / 2);
+        const targetY = monitor.position.y + Math.round((monitorH - targetH) / 2);
+        await win.setSize(new PhysicalSize(targetW, targetH));
+        await win.setPosition(new PhysicalPosition(targetX, targetY));
+      }
+    } catch (err) {
+      console.warn("[VisionPipe] resizeForHistoryHub failed:", err);
+    }
+  }, []);
+
+  // ── Reset mode to "idle" when the session ends ──
+  // SessionWindow's "New Session" button dispatches END_SESSION (clearing
+  // state.session) but doesn't touch App's mode. Without this effect, mode
+  // would stay at "session" forever after the first end-session, which
+  // would cause the global hotkey handler below to ignore ⌘⇧C presses
+  // (since it only fires when mode === "idle"). HistoryHub renders correctly
+  // either way (it triggers on !state.session), but the hotkey gate breaks.
+  // Also shrinks the window back to HistoryHub size — the SessionWindow
+  // dimensions (70%×85% of monitor) are too large for the bundle list.
+  useEffect(() => {
+    if (!state.session && mode === "session") {
+      setMode("idle");
+      void resizeForHistoryHub();
+    }
+  }, [state.session, mode, resizeForHistoryHub]);
 
   // ── Listen for the global hotkey event from Rust ──
   useEffect(() => {
@@ -281,23 +317,27 @@ function AppInner() {
   }, []);
 
   // ── Dismiss onboarding (Got it! button — only enabled when all granted) ──
+  // Switches to "idle" mode and resizes the window to a session-friendly
+  // size centered on the current monitor. The window stays VISIBLE so the
+  // user lands on HistoryHub (their bundle history + "+ New Bundle" CTA).
+  // Previously hid the window, but now that idle = HistoryHub the user
+  // needs to actually see something.
   const dismissOnboarding = useCallback(async () => {
     setMode("idle");
+    await resizeForHistoryHub();
     const win = getCurrentWindow();
-    await win.hide();
-  }, []);
+    await win.show();
+    await win.setFocus();
+  }, [resizeForHistoryHub]);
 
   // ── Initialize the session's audio recorder for on-device transcription.
   // v0.5.2: switched from MediaRecorder + Deepgram (cloud) to Rust cpal +
   // Apple SFSpeechRecognizer (on-device). Each screenshot's narration is
   // whatever was recorded between that screenshot and the next (or session
   // end). Per-segment batch transcription removes the vp-edge proxy
-  // dependency entirely.
-  //
-  // Real-time streaming via Deepgram is preserved as `connectDeepgram` in
-  // src/lib/deepgram-client.ts and the wiring is in git history; future
-  // build can re-enable behind a Settings toggle ("Real-time transcription
-  // (cloud)" vs "On-device (default)").
+  // dependency entirely. Cloud streaming (Deepgram) was removed in v0.6.0;
+  // git history has the implementation if we need to re-enable it behind a
+  // Settings toggle.
   const initSessionAudio = useCallback(async () => {
     try {
       // Start the cpal recording for the FIRST segment of this session.
@@ -306,7 +346,6 @@ function AppInner() {
       // dispatch into the just-finished screenshot's transcriptSegment.
       await invoke("start_recording");
       setMicRecording(true);
-      setNetworkState("local-only"); // not really "offline" — just on-device
     } catch (err) {
       console.warn("[VisionPipe] start_recording failed (mic permission?):", err);
       setMicPermissionDenied(true);
@@ -455,16 +494,21 @@ function AppInner() {
   }, [state.session, dispatch, micOnboardingShown, micRecording, initSessionAudio, stopAndTranscribeCurrentSegment]);
 
   const onCancelCapture = useCallback(async () => {
+    const win = getCurrentWindow();
     if (state.session) {
       setMode("session");
-      const win = getCurrentWindow();
       await win.show();
+      await win.setAlwaysOnTop(false);
     } else {
       setMode("idle");
-      const win = getCurrentWindow();
-      await win.hide();
+      // Window is currently fullscreen (overlay). Shrink back to the
+      // HistoryHub size so the user doesn't land on a fullscreen empty
+      // panel after a misfire.
+      await resizeForHistoryHub();
+      await win.show();
+      await win.setAlwaysOnTop(false);
     }
-  }, [state.session]);
+  }, [state.session, resizeForHistoryHub]);
 
   // ── Mic toggle (Header button) ──
   // First click on a fresh install (or after sign-out): show the mic
@@ -500,10 +544,12 @@ function AppInner() {
     }
   }, [micOnboardingShown, micRecording, stopAndTranscribeCurrentSegment, dispatch]);
 
-  // ── Clear the recorder ref after SessionWindow flushes audio at session end.
-  // Stops any in-progress recording AND drains the final segment's transcript
-  // into the last screenshot or closing narration. Exposed via MicContext so
-  // SessionWindow's "New session" handler can finalize before END_SESSION.
+  // ── Stop the master recorder and drain its final segment.
+  // Called from SessionWindow's "New Session" button before END_SESSION,
+  // and from ReRecordModal so cpal's single-recording slot is free.
+  // Drains the in-flight segment's transcript into the last screenshot
+  // (or closing narration if no screenshots yet) so nothing the user
+  // said before stop is lost.
   const clearRecorder = useCallback(async () => {
     if (micRecording) {
       const transcript = await stopAndTranscribeCurrentSegment();
@@ -515,53 +561,24 @@ function AppInner() {
         }
       }
     }
-    recorderRef.current = null;
     setMicRecording(false);
   }, [micRecording, stopAndTranscribeCurrentSegment, dispatch]);
 
-  // ── No-op now that the Deepgram path is disabled (v0.5.2 → on-device).
-  // Kept for MicContext API stability so SessionWindow doesn't need to
-  // change its prop wiring. Re-enable when Deepgram is added back behind
-  // a Settings toggle.
-  const closeDeepgram = useCallback(() => {
-    dgRef.current?.close();
-    dgRef.current = null;
-    setNetworkState("local-only");
-  }, []);
+  // No-op kept for MicContext API stability — Deepgram WebSocket path was
+  // removed in v0.5.2 (replaced by Apple SFSpeechRecognizer). If we re-add
+  // cloud streaming behind a Settings toggle, this will become the close
+  // hook again.
+  const closeDeepgram = useCallback(() => {}, []);
 
-  // ── Flush master audio on window close / app quit ──
-  // The browser fires `beforeunload` when the Tauri window is being torn down.
-  // We stop the recorder, await the Blob, and synchronously kick off a write
-  // via `write_session_file`. Best-effort: a hard kill of the process won't
-  // run this. Re-bound when state.session changes so the closure captures the
-  // current folder.
+  // ── Flush master recorder on window close / app quit ──
+  // beforeunload fires when the Tauri window tears down. Drain the
+  // in-flight segment so the transcript isn't lost. Best-effort: a hard
+  // process kill bypasses this entirely.
   useEffect(() => {
-    const handler = async () => {
-      if (recorderRef.current && state.session) {
-        try {
-          const blob = await recorderRef.current.stop();
-          const buf = new Uint8Array(await blob.arrayBuffer());
-          await invoke("write_session_file", {
-            folder: state.session.folder,
-            filename: state.session.audioFile,
-            bytes: Array.from(buf),
-          });
-          recorderRef.current = null;
-          setMicRecording(false);
-        } catch (err) {
-          console.warn("[VisionPipe] Audio flush failed on close:", err);
-        }
-      }
-      // Tear down the Deepgram socket if it's still open. Best-effort: a hard
-      // process kill won't run this, but a clean window close will.
-      if (dgRef.current) {
-        try { dgRef.current.close(); } catch { /* ignore */ }
-        dgRef.current = null;
-      }
-    };
+    const handler = () => { void clearRecorder(); };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [state.session]);
+  }, [clearRecorder]);
 
   let view: ReactNode;
   if (mode === "onboarding") {
@@ -574,10 +591,13 @@ function AppInner() {
     );
   } else if (mode === "selecting") {
     view = <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} captureMode={captureMode} />;
-  } else if (mode === "session" || state.session) {
+  } else if (state.session) {
     view = <SessionWindow />;
   } else {
-    view = <IdleScreen />;
+    // mode === "idle" OR (mode === "session" but session was just ended).
+    // After END_SESSION the user lands here, on HistoryHub, instead of the
+    // window disappearing — which used to be confusing ("did the app quit?").
+    view = <HistoryHub />;
   }
 
   return (
@@ -585,7 +605,6 @@ function AppInner() {
       recording: micRecording,
       permissionDenied: micPermissionDenied,
       onToggle: onToggleMic,
-      recorder: recorderRef.current,
       networkState,
       clearRecorder,
       closeDeepgram,

@@ -1,16 +1,25 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { RecorderHandle } from "../lib/audio-recorder";
 import type { NetworkState } from "../components/Header";
 
 export interface MicCtx {
   recording: boolean;
   permissionDenied: boolean;
   onToggle: () => void;
-  recorder: RecorderHandle | null;
   networkState: NetworkState;
-  /** Clear the master recorder ref (called after session-end audio flush). */
-  clearRecorder: () => void;
-  /** Close the Deepgram WebSocket and reset network state to local-only. */
+  /**
+   * Stop the master cpal recording, drain its in-flight transcript into
+   * the appropriate place (last screenshot's segment, or closing narration
+   * if no screenshots yet), and flip mic state to off. Used by:
+   *   - SessionWindow on "New Session" before END_SESSION
+   *   - ReRecordModal on open, since cpal only allows one recording at a time
+   */
+  clearRecorder: () => Promise<void>;
+  /**
+   * No-op kept for API stability — Deepgram WebSocket path was removed
+   * in v0.5.2 (replaced by Apple SFSpeechRecognizer). SessionWindow still
+   * calls this on session-end out of caution. Will become real again if
+   * we re-enable cloud streaming behind a Settings toggle.
+   */
   closeDeepgram: () => void;
 }
 

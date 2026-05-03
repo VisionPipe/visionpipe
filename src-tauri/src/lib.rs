@@ -14,10 +14,13 @@ mod permissions;
 mod session;
 mod speech;
 
-/// Shared state mapping tray-menu ID `recent_<N>` → file path on disk.
-/// Updated whenever we rebuild the tray menu (on launch + after each
-/// capture). Lock held briefly during click dispatch.
-struct RecentCapturesState(Mutex<Vec<String>>);
+/// Shared state mapping tray-menu ID `session_<N>` → session folder path on
+/// disk. Updated whenever we rebuild the tray menu (on launch + after each
+/// session change). Lock held briefly during click dispatch. Renamed from
+/// RecentCapturesState (which held PNG paths) so the tray now shows recent
+/// SESSIONS (bundles) instead of individual screenshots — matches the
+/// in-app History view.
+struct RecentSessionsState(Mutex<Vec<String>>);
 
 /// Stashed metadata captured at hotkey-press time (BEFORE Vision|Pipe
 /// steals focus). The frontend's `get_metadata` Tauri command reads + takes
@@ -238,10 +241,14 @@ async fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Build the tray menu from the current recent-captures list.
+/// Build the tray menu from the current recent-sessions list. Each session
+/// becomes a menu item with ID `session_<idx>`; the click handler resolves
+/// the index against `RecentSessionsState` to get the folder path, then
+/// reveals it in Finder. Index-based addressing keeps the click handler
+/// trivial (no string parsing of session IDs).
 fn build_tray_menu(
     app: &AppHandle,
-    recents: &[(String, String)],
+    recents: &[SessionSummary],
 ) -> Result<Menu<tauri::Wry>, tauri::Error> {
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
 
@@ -249,16 +256,17 @@ fn build_tray_menu(
         let label = MenuItem::with_id(
             app,
             "no_recents",
-            "No recent captures yet",
+            "No recent sessions yet",
             false,
             None::<&str>,
         )?;
         items.push(Box::new(label));
     } else {
-        let header = MenuItem::with_id(app, "recents_header", "Recent captures", false, None::<&str>)?;
+        let header = MenuItem::with_id(app, "recents_header", "Recent sessions", false, None::<&str>)?;
         items.push(Box::new(header));
-        for (i, (label, _path)) in recents.iter().enumerate() {
-            let id = format!("recent_{}", i);
+        for (i, s) in recents.iter().enumerate() {
+            let id = format!("session_{}", i);
+            let label = format_session_menu_label(s);
             let mi = MenuItem::with_id(app, &id, format!("  {}", label), true, None::<&str>)?;
             items.push(Box::new(mi));
         }
@@ -294,14 +302,16 @@ fn build_tray_menu(
 }
 
 /// Rebuild the tray menu from the current filesystem state and replace
-/// the tray's menu in-place. Also updates the shared `RecentCapturesState`
-/// so click dispatch uses the same path list the menu was built from.
+/// the tray's menu in-place. Also updates the shared `RecentSessionsState`
+/// so click dispatch uses the same folder list the menu was built from.
+/// Cap at 10 sessions in the tray (per user request) — full list is in the
+/// in-app History view.
 fn refresh_tray_menu(app: &AppHandle) {
-    let recents = list_recent_captures();
+    let recents = list_recent_sessions(10);
 
-    if let Some(state) = app.try_state::<RecentCapturesState>() {
+    if let Some(state) = app.try_state::<RecentSessionsState>() {
         if let Ok(mut paths) = state.0.lock() {
-            *paths = recents.iter().map(|(_, p)| p.clone()).collect();
+            *paths = recents.iter().map(|s| s.folder.clone()).collect();
         }
     }
 
@@ -632,6 +642,16 @@ async fn write_session_file(folder: String, filename: String, bytes: Vec<u8>) ->
     session::write_session_file(&folder, &filename, bytes)
 }
 
+/// Read raw bytes from <session_folder>/<filename>. Used by HistoryHub to
+/// pull transcript.json or transcript.md back into the UI for re-rendering
+/// or copying. Returned as Vec<u8> rather than String so binary files work
+/// too (callers that want text decode it on the JS side).
+#[tauri::command]
+async fn read_session_file(folder: String, filename: String) -> Result<Vec<u8>, String> {
+    let path = std::path::PathBuf::from(&folder).join(&filename);
+    std::fs::read(&path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))
+}
+
 #[tauri::command]
 async fn move_to_deleted(folder: String, filename: String) -> Result<(), String> {
     session::move_to_deleted(&folder, &filename)
@@ -702,17 +722,17 @@ pub fn run() {
             let _ = show_onboarding; // kept for type elaboration; real menu is built below
 
             // Initial tray-menu build with current filesystem state, plus
-            // shared mutex of recent paths so click dispatch can resolve
-            // `recent_<N>` IDs back to the actual file path.
-            app.manage(RecentCapturesState(Mutex::new(Vec::new())));
+            // shared mutex of recent session folder paths so click dispatch
+            // can resolve `session_<N>` IDs back to a folder to reveal.
+            app.manage(RecentSessionsState(Mutex::new(Vec::new())));
             // Stashed-metadata slot. Populated by every capture-trigger
             // path (hotkey, tray, in-app "+") BEFORE VP takes focus.
             // Drained by the next get_metadata invocation.
             app.manage(StashedMetadata(Mutex::new(None)));
-            let initial_recents = list_recent_captures();
-            if let Some(state) = app.try_state::<RecentCapturesState>() {
+            let initial_recents = list_recent_sessions(10);
+            if let Some(state) = app.try_state::<RecentSessionsState>() {
                 if let Ok(mut paths) = state.0.lock() {
-                    *paths = initial_recents.iter().map(|(_, p)| p.clone()).collect();
+                    *paths = initial_recents.iter().map(|s| s.folder.clone()).collect();
                 }
             }
             let menu = build_tray_menu(app.handle(), &initial_recents)?;
@@ -763,15 +783,16 @@ pub fn run() {
                                 Err(e) => log::error!("Diagnostic bundle failed: {}", e),
                             }
                         }
-                        _ if id.starts_with("recent_") => {
-                            // recent_<N>: open Nth file from RecentCapturesState
-                            if let Some(rest) = id.strip_prefix("recent_") {
+                        _ if id.starts_with("session_") => {
+                            // session_<N>: open Nth session folder in Finder
+                            // (lets user grab PNGs / transcript.md by drag).
+                            if let Some(rest) = id.strip_prefix("session_") {
                                 if let Ok(idx) = rest.parse::<usize>() {
-                                    if let Some(state) = app.try_state::<RecentCapturesState>() {
+                                    if let Some(state) = app.try_state::<RecentSessionsState>() {
                                         if let Ok(paths) = state.0.lock() {
-                                            if let Some(path) = paths.get(idx) {
+                                            if let Some(folder) = paths.get(idx) {
                                                 let _ = std::process::Command::new("open")
-                                                    .arg(path)
+                                                    .arg(folder)
                                                     .status();
                                             }
                                         }
@@ -904,6 +925,9 @@ pub fn run() {
             load_install_token,
             load_hotkey_config,
             save_hotkey_config,
+            list_recent_sessions_cmd,
+            reveal_in_finder,
+            read_session_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

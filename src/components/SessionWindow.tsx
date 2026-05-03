@@ -119,24 +119,13 @@ export function SessionWindow() {
     window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq } }));
   };
 
-  // ── Flush master audio, then end the session ──
-  // Stops the recorder owned by App.tsx (via MicContext), awaits the Blob,
-  // writes audio-master.webm to the session folder, then clears the recorder
-  // ref in App.tsx and dispatches END_SESSION. The next first-capture branch
-  // in App.tsx will create a fresh recorder.
+  // ── Flush master mic, then end the session ──
+  // v0.6.0: previously did its own MediaRecorder stop+write of
+  // audio-master.webm. With the v0.5.2 cpal switch, audio doesn't get
+  // saved as a file at all — only its transcript. clearRecorder drains
+  // the in-flight segment's transcript into the appropriate place.
   const onNewSession = async () => {
-    if (mic.recorder && session) {
-      try {
-        const blob = await mic.recorder.stop();
-        const buf = new Uint8Array(await blob.arrayBuffer());
-        await invoke("write_session_file", {
-          folder: session.folder, filename: session.audioFile, bytes: Array.from(buf),
-        });
-      } catch (err) {
-        console.warn("[VisionPipe] Audio flush failed on new-session:", err);
-      }
-    }
-    mic.clearRecorder();
+    await mic.clearRecorder();
     mic.closeDeepgram();
     dispatch({ type: "END_SESSION" });
   };
