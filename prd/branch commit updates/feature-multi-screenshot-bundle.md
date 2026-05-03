@@ -4,6 +4,32 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 07:45 PDT — v0.3.2 (Task 23: Window-scoped hotkey wiring)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Wired the persisted hotkey config (Tasks 21 + 22) into actual runtime behavior. App.tsx now loads `HotkeyConfig` from Rust on mount via `invoke<{...}>("load_hotkey_config")` into a small `useState` snapshot (`copyAndSend` / `rerecordActive` / `toggleViewMode`), defaulting to the same combos hardcoded on the Rust side (`CmdOrCtrl+Enter` / `CmdOrCtrl+Shift+R` / `CmdOrCtrl+T`) so a load failure never leaves the user shortcut-less. A second effect attaches a single window-level `keydown` listener (re-bound when `hotkeys`, `state.session`, or `dispatch` change) that runs each event through a tiny `matches(e, combo)` helper: split the combo on `+`, treat `CmdOrCtrl` as `metaKey || ctrlKey` (same OR semantics as the Tauri global-shortcut plugin), require exact agreement on each modifier flag, then compare the trailing key case-insensitively for single-character keys (`A`/`a` both match `A`) and case-sensitively for named keys (`Tab`/`Enter`). The matched action dispatches: `copyAndSend` → `window.dispatchEvent(new CustomEvent("vp-copy-and-send"))`, `toggleViewMode` → `dispatch({ type: "TOGGLE_VIEW_MODE" })` (no-op if there's no active session), `rerecordActive` → `vp-rerecord-segment` with the highest-`seq` screenshot's `seq` in `detail` (no-op if there are no screenshots yet). All three call `e.preventDefault()` on match. SessionWindow.tsx grew a matching `vp-copy-and-send` listener that calls the existing `onCopyAndSend` handler. To keep that listener stable across renders (otherwise it would re-attach on every state update), `onCopyAndSend` was promoted from a plain inner function declaration to a `useCallback(..., [state.session])` — required moving the `if (!state.session) return null` early-exit *after* the callback definition (the callback now does its own null-check internally) and removing the now-redundant outer `const session = state.session` shadow at the top of the function (it stays after the early-exit for the rest of the component). `useCallback` was added to the existing React import. Verification: `pnpm tsc --noEmit` clean, 22/22 vitest passing (no test changes — the new behavior is window-event wiring that requires a real DOM, exercised in production), `pnpm vite build` succeeds at 256.29 kB / 78.22 kB gzipped (up 1.53 kB / 0.36 kB from Task 22's 254.76 kB / 77.86 kB, accounting for the matcher helper + two new effects + state hook).
+
+### Detail of changes made:
+- **`src/App.tsx`**: Added `useState` for `hotkeys` initialized to the three Rust defaults. Added `useEffect` to load the persisted config on mount and translate snake_case → camelCase. Added a second `useEffect` that registers a `window.keydown` listener with a local `matches()` helper for combo parsing, dispatching to `vp-copy-and-send` / `TOGGLE_VIEW_MODE` / `vp-rerecord-segment` as appropriate. Both effects placed after the existing `vp-take-next-screenshot` and `localStorage` viewMode effects to preserve effect order.
+- **`src/components/SessionWindow.tsx`**: Added `useCallback` to the React import. Wrapped `onCopyAndSend` in `useCallback([state.session])` and pushed the early-exit `if (!state.session) return null` past the callback so hooks order stays stable. Added a `useEffect` that listens for `vp-copy-and-send` and forwards to the memoized `onCopyAndSend`.
+
+### Verification results:
+- `pnpm tsc --noEmit`: exit 0, no output.
+- `pnpm test --run`: 4 test files / 22 tests passing in 5.68s — no regressions.
+- `pnpm vite build`: success, `dist/assets/index-hrmpj1kn.js 256.29 kB │ gzip: 78.22 kB`. Two pre-existing Tauri `dpi.js` / `window.js` dynamic-vs-static import warnings persist unchanged.
+
+### Potential concerns to address:
+- **`Shift+1` matcher edge case**: When the user holds Shift+1 on a US layout, `e.key` is `"!"` (the shifted glyph), not `"1"`. The combo string `"CmdOrCtrl+Shift+1"` would parse the trailing key as `"1"` and never match. The current matcher would similarly fail for any combo whose trailing key is a digit/symbol with a shifted variant. Acceptable for v0.2 because all four built-in defaults use letters (`C`/`R`/`T`) or `Enter`, but a future polish pass should switch to `e.code` (e.g. `"Digit1"`) or fold shift-glyph mapping into the matcher. The Settings panel's `formatKey` (Task 22) suffers the same asymmetry — it stores the shifted glyph rather than the base key — so the two are at least consistent today.
+- **Dead-letter on missing session**: `toggleViewMode` and `rerecordActive` silently no-op when there's no session or no screenshots. No user feedback (no beep, no toast). Probably the right call — these are window-scoped shortcuts that only make sense mid-session — but worth flagging for UX review.
+- **No live re-bind**: Same caveat as Task 22 — changing a hotkey via Settings updates `settings.json` immediately, but App.tsx's `hotkeys` state was loaded once at mount and won't refresh until the next app launch. The Settings panel's "take effect after restart" footer note covers this.
+- **`CmdOrCtrl` ambiguity on macOS**: The matcher treats `metaKey || ctrlKey` as "either satisfies CmdOrCtrl", matching the Tauri global-shortcut plugin's documented behavior. On macOS a user pressing pure `Ctrl+Enter` (no Cmd) would also fire `vp-copy-and-send`, which is mildly surprising but consistent with Tauri's global registration.
+- **No conflict with browser/textarea defaults**: `e.preventDefault()` only fires inside the matched branches. A user typing `Cmd+Enter` inside a `<textarea>` (e.g. the future re-record narration field) would still trigger Copy & Send. If we add focused-text-input fields in v0.3+, they'll need to filter on `document.activeElement.tagName` or wrap their inputs in a `stopPropagation` at the form level.
+- **`useCallback` deps**: `onCopyAndSend` depends on `state.session` (the whole object), which means every reducer dispatch that produces a new session reference causes the callback to re-create and the listener effect to re-attach. Functionally correct but slightly chatty. Could be tightened by depending on only `state.session?.folder` + the screenshots array reference, but the savings are negligible at human keypress timescales.
+
+---
+
 ## Progress Update as of 2026-05-03 07:30 PDT — v0.3.2 (Task 22: Settings panel + hotkey rebind UI)
 *(Most recent updates at top)*
 

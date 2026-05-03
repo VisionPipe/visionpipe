@@ -141,6 +141,73 @@ function AppInner() {
     if (state.session) localStorage.setItem("vp-default-view", state.session.viewMode);
   }, [state.session?.viewMode]);
 
+  // ── Window-scoped hotkey wiring ──
+  // Loads user-configured combos from the Rust persistence layer
+  // (`load_hotkey_config` — Task 21) on mount, then attaches a single
+  // `keydown` listener on `window` that dispatches to the appropriate action.
+  // Falls back to the same defaults the Rust side hardcodes if the load fails.
+  const [hotkeys, setHotkeys] = useState({
+    copyAndSend: "CmdOrCtrl+Enter",
+    rerecordActive: "CmdOrCtrl+Shift+R",
+    toggleViewMode: "CmdOrCtrl+T",
+  });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const cfg = await invoke<{
+          take_next_screenshot: string;
+          copy_and_send: string;
+          rerecord_active: string;
+          toggle_view_mode: string;
+        }>("load_hotkey_config");
+        setHotkeys({
+          copyAndSend: cfg.copy_and_send,
+          rerecordActive: cfg.rerecord_active,
+          toggleViewMode: cfg.toggle_view_mode,
+        });
+      } catch (err) {
+        console.warn("[VisionPipe] Failed to load hotkey config; using defaults:", err);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const matches = (e: KeyboardEvent, combo: string): boolean => {
+      const parts = combo.split("+");
+      const wantsMeta = parts.includes("CmdOrCtrl");
+      const wantsShift = parts.includes("Shift");
+      const wantsAlt = parts.includes("Alt");
+      const meta = (e.metaKey || e.ctrlKey);
+      const key = parts.filter(p => !["CmdOrCtrl", "Shift", "Alt"].includes(p))[0];
+      if (!key) return false;
+      if (wantsMeta !== meta) return false;
+      if (wantsShift !== e.shiftKey) return false;
+      if (wantsAlt !== e.altKey) return false;
+      // Compare keys case-insensitively for letters; case-sensitively for named keys
+      const eKey = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+      const cKey = key.length === 1 ? key.toUpperCase() : key;
+      return eKey === cKey;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (matches(e, hotkeys.copyAndSend)) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("vp-copy-and-send"));
+      } else if (matches(e, hotkeys.toggleViewMode)) {
+        e.preventDefault();
+        if (state.session) dispatch({ type: "TOGGLE_VIEW_MODE" });
+      } else if (matches(e, hotkeys.rerecordActive)) {
+        e.preventDefault();
+        const last = state.session?.screenshots[state.session.screenshots.length - 1];
+        if (last) {
+          window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq: last.seq } }));
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hotkeys, state.session, dispatch]);
+
   // ── Re-check permissions on demand (Onboarding button click) ──
   const recheckPermissions = useCallback(async () => {
     try {

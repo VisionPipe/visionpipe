@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { InterleavedView } from "./InterleavedView";
@@ -28,17 +28,28 @@ export function SessionWindow() {
     return () => window.removeEventListener("vp-rerecord-segment", handler);
   }, []);
 
-  if (!state.session) return null;
-  const session = state.session;
-
-  const onCopyAndSend = async () => {
+  // Memoized so the keyboard-shortcut listener effect below doesn't
+  // re-attach on every render. Depends on state.session (folder + content).
+  const onCopyAndSend = useCallback(async () => {
+    if (!state.session) return;
+    const session = state.session;
     const md = renderMarkdown(session);
     await writeText(md);
     const bytes = new TextEncoder().encode(md);
     await invoke("write_session_file", {
       folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
     });
-  };
+  }, [state.session]);
+
+  // Listen for the window-scoped Copy & Send hotkey dispatched by App.tsx.
+  useEffect(() => {
+    const handler = () => void onCopyAndSend();
+    window.addEventListener("vp-copy-and-send", handler);
+    return () => window.removeEventListener("vp-copy-and-send", handler);
+  }, [onCopyAndSend]);
+
+  if (!state.session) return null;
+  const session = state.session;
 
   const takeNext = () => window.dispatchEvent(new CustomEvent("vp-take-next-screenshot"));
 
