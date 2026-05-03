@@ -4,6 +4,33 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 08:45 PDT — v0.3.3 (README accuracy pass)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fixed 8 inaccuracies in the README to reflect what actually ships in v0.3.3 vs what's still planned. The README had been describing the pre-Spec-1 single-screenshot flow with on-device Whisper, brew install, and a drawing/markup layer that doesn't exist yet — all of which were misleading after the multi-screenshot redesign landed.
+
+### Detail of changes made:
+
+- **Line 19** ("Why Vision|Pipe" closer): Replaced "No uploads. No integrations." with honest local-first framing that discloses Deepgram cloud transcription and points at the v0.3 WhisperKit roadmap. The previous line directly contradicted what the app does today.
+- **Lines 23-29** ("How It Works"): Rewrote the 5-step flow to a 6-step multi-screenshot flow. Hotkey changed from `Cmd+Shift+V` (was wrong) to `Cmd+Shift+C` (actual default, configurable in Settings). Added explicit mention of the session window, real-time transcription, "+" button, caption editing, and the "Copy & Send" button.
+- **Lines 56-59** ("Draw It"): Marked as planned for v0.3 since the markup layer doesn't ship yet. Updated the "all three modes combined" line to honestly say voice + text combine today; drawing is future.
+- **Line 97** (browser metadata): Removed the false "Windows UI Automation" claim; only macOS Accessibility API is wired today.
+- **Lines 118, 120, 122** (Capture Metadata table): "Voice + Drawing" → "Voice + Text"; version bumped from 0.1.0 → 0.3.3; fixed the metadata-format description to reference the markdown `**Context:**` block instead of the old appended-text format.
+- **Lines 146-156** (Installation): Removed `brew install visionpipe` (formula doesn't exist in Homebrew yet — would 404). Disclosed Apple Silicon-only constraint. Marked Windows as planned with a contributors note.
+- **Lines 160-165** (Built With): Removed `Whisper — on-device voice transcription` (false). Added Deepgram Nova-3 (actual provider), WhisperKit (planned), React 19 + TypeScript (was missing).
+- **Lines 168-178** (Features): Major rewrite. Removed "Auto-transcription on-device" (false). Added the actual shipped features: multi-screenshot sessions, real-time transcription, per-segment re-record, two view modes, markdown output for LLM consumption, offline fallback, customizable hotkeys. Removed the "Mac and Windows" cross-platform claim.
+
+### Potential concerns to address:
+
+- **None blocking.** The README now matches v0.3.3 reality.
+- One nuance: I kept the `> If Playwright gives your test suite vision, Vision|Pipe gives your LLM vision while you're working with it.` tagline as-is — it remains accurate and is good marketing.
+- The Capture Metadata table at lines 67-122 still has detailed field descriptions that may not all be in the current `metadata.rs` implementation (e.g., "Cursor type: Pointer/Text/Crosshair" and "Color profile: Display P3"). These are likely still aspirational to some degree but not actively misleading; left for a separate audit pass.
+- The `screenshot | llm` tagline and Unix-philosophy framing throughout are kept — those still accurately describe the product even with cloud transcription, since the markdown output to clipboard truly does compose with any LLM downstream via paste.
+
+---
+
 ## Progress Update as of 2026-05-03 08:30 PDT — v0.3.3 (Spec 1 implementation complete; overnight run finished)
 *(Most recent updates at top)*
 

@@ -16,17 +16,18 @@ Vision|Pipe is a lightweight open source Mac and Windows utility that captures y
 
 **The Solution:** Vision|Pipe skips the description. Capture the screen. Annotate however feels natural — speak it, type it, or draw it. Paste the full context — image, annotation, and metadata — into your LLM in one action.
 
-No uploads. No integrations. No UI sprawl. Just the Unix philosophy applied to AI vision.
+Local-first. Sessions live on disk in `~/Pictures/VisionPipe/`. Real-time voice transcription is opt-in and cloud-routed via Deepgram (`vp-edge` proxy); on-device WhisperKit is on the v0.3 roadmap for users who prefer to keep audio fully local.
 
 ---
 
 ## How It Works
 
-1. Press your hotkey (default `Cmd+Shift+V` on Mac, `Ctrl+Shift+V` on Windows)
+1. Press your hotkey (default `Cmd+Shift+C` on Mac; configurable in Settings)
 2. Select the area of your screen to capture
-3. Annotate using any combination of voice, text, or drawing
-4. Hit Enter — the screenshot, annotation, and metadata are bundled and copied to clipboard
-5. Paste directly into GPT-4, Gemini, Claude, OpenAI Codex, or any LLM
+3. The session window opens with your first card. Talk naturally as you work — Vision|Pipe transcribes in real time.
+4. Take more screenshots with the "+" button (or your configured hotkey); each becomes its own card with its own segment of narration. Edit captions inline.
+5. Hit "📋 Copy & Send" — a structured markdown bundle (image references + transcript + metadata) is copied to clipboard.
+6. Paste directly into Claude Code, GPT-4, Gemini, or any LLM that accepts images.
 
 ---
 
@@ -53,10 +54,10 @@ Add a written comment at the moment of capture. Your intent travels with the ima
 Why is this button misaligned in dark mode?
 ```
 
-### Draw It
-Circle the problem. Highlight the element. Draw an arrow. Vision|Pipe includes a lightweight markup layer so your LLM knows exactly what to focus on — no words required.
+### Draw It (planned — v0.3)
+Circle the problem. Highlight the element. Draw an arrow. A lightweight markup layer is on the roadmap — for now, voice and text annotation cover most cases.
 
-All three modes can be combined. The full context — image, transcript, text, and markup — is bundled into one clipboard payload.
+Voice and text combine in the markdown bundle today. Drawing/markup joins in v0.3.
 
 ---
 
@@ -94,7 +95,7 @@ Vision|Pipe does not just send a screenshot. It sends the full context of *where
 | Page title | `VisionPipe — GitHub` |
 | Viewport dimensions | `1440 x 789` |
 
-> Browser metadata is captured via macOS Accessibility API and Windows UI Automation. No browser extension required.
+> Browser metadata is captured via macOS Accessibility API. Windows UI Automation support is on the roadmap. No browser extension required.
 
 ### System
 | Field | Example |
@@ -115,11 +116,11 @@ Vision|Pipe does not just send a screenshot. It sends the full context of *where
 | Field | Example |
 |---|---|
 | Capture method | `Region / Full Screen / Window` |
-| Annotation type(s) used | `Voice + Drawing` |
+| Annotation type(s) used | `Voice + Text` |
 | Image format | `PNG` |
-| VisionPipe version | `0.1.0` |
+| Vision\|Pipe version | `0.3.3` |
 
-All metadata is included in the clipboard payload as structured text appended beneath the annotation, giving your LLM the full picture — literally and contextually.
+All metadata is included in the markdown clipboard payload as a structured `**Context:**` block beneath each screenshot, giving your LLM the full picture — literally and contextually.
 
 ---
 
@@ -146,35 +147,36 @@ The annotation and metadata are captured at the moment of intent — not after, 
 ## Installation
 
 ### macOS
-```bash
-brew install visionpipe
-```
+Download the signed/notarized DMG from [Releases](https://github.com/VisionPipe/visionpipe/releases). Apple Silicon (`aarch64`) only at present; Intel + Universal builds are on the roadmap. A Homebrew formula is also planned.
 
-Or download from [Releases](https://github.com/VisionPipe/visionpipe/releases).
-
-### Windows
-Download the installer from [Releases](https://github.com/VisionPipe/visionpipe/releases).
+### Windows (planned)
+Windows builds are not yet shipped — see roadmap. The Tauri code base supports cross-compilation; contributions welcome.
 
 ---
 
 ## Built With
 
-- [Tauri](https://tauri.app) — lightweight, secure native app framework
+- [Tauri 2](https://tauri.app) — lightweight, secure native app framework
 - [Rust](https://www.rust-lang.org) — systems-level metadata capture and performance
-- [Whisper](https://openai.com/research/whisper) — on-device voice transcription
+- [React 19](https://react.dev) + [TypeScript](https://www.typescriptlang.org) — frontend
+- [Deepgram Nova-3](https://deepgram.com) — real-time voice transcription (cloud, via `vp-edge` proxy)
+- [WhisperKit](https://github.com/argmaxinc/WhisperKit) — on-device transcription opt-in (planned, v0.3)
 
 ---
 
 ## Features
 
 - Lightweight — minimal CPU and memory footprint (Tauri, not Electron)
-- Fast — capture and copy in milliseconds
-- Multi-modal annotation — voice, text, and drawing
-- Auto-transcription — voice notes converted to text on-device
-- Rich metadata — spatial, window, browser, system context bundled automatically so your LLM knows exactly what you're running
-- Cross-platform — Mac and Windows
-- Keyboard-first — one hotkey does everything
-- LLM-agnostic — works with any AI that accepts images
+- Fast — capture in milliseconds
+- **Multi-screenshot sessions** — string captures together with continuous narration; one shareable bundle
+- **Real-time voice transcription** — talk while you capture; transcripts stream into each card live (Deepgram cloud; on-device WhisperKit planned)
+- **Per-segment re-record** — fix any single piece of narration without losing the rest
+- **Two view modes** — interleaved (cards + inline narration) or split (cards left, transcript right)
+- Rich metadata — spatial, window, browser, system context bundled automatically into the markdown output
+- **Markdown output optimized for LLM consumption** — Claude Code, GPT-4, Gemini, etc. read the structured bundle directly; image references resolve via local file paths
+- **Offline fallback** — audio always preserved locally even when the transcription proxy is unreachable
+- Customizable hotkeys via in-app Settings
+- macOS native — Apple Silicon shipping; Windows + Linux on roadmap
 
 ---
 
