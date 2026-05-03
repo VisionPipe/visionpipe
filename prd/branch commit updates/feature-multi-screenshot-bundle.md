@@ -1,3 +1,21 @@
+## Progress Update as of 2026-05-02 20:58 PDT — v0.3.2 (Task 8: persistence + debounced writes)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Implemented auto-persistence for `transcript.json` by creating a debounced write layer that triggers on every session state change. Created `src/state/persistence.ts` with `scheduleSessionWrite()` function that debounces writes 500ms by default but flushes immediately for high-priority actions (screenshot capture, delete, re-record). Modified `src/state/session-context.tsx` to wire the persistence layer into the reducer via a useEffect that detects action type and invokes the appropriate flush mode. The implementation preserves the Session data to disk at `{sessionFolder}/transcript.json` via the existing `write_session_file` Tauri command. TypeScript compilation 0 errors; all 18 tests still pass (no new tests for persistence — mocking Tauri's `invoke` is out of scope for this task).
+
+### Detail of changes made:
+
+- **`src/state/persistence.ts`** (created) — exports `scheduleSessionWrite(session: Session, immediate?: boolean)` function managing a debounce queue. Internal state: `pending` (the session to write), `timer` (the debounce timeout ID), `DEBOUNCE_MS` constant (500). `flush()` async function encodes the session to JSON, converts to `Uint8Array`, and invokes `write_session_file` with folder, filename ("transcript.json"), and bytes array. When `immediate=true`, cancels any pending timeout and calls `flush()` immediately; otherwise re-arms the timeout. Error handling: console.error on Tauri invoke failure, does not re-throw.
+- **`src/state/session-context.tsx`** (modified) — added imports for `useEffect` and `useRef` hooks, plus `scheduleSessionWrite`. Added `IMMEDIATE_ACTIONS` Set listing action types that should flush immediately: `APPEND_SCREENSHOT`, `DELETE_SCREENSHOT`, `SET_RE_RECORDED_AUDIO`. Changed `SessionProvider` to wrap `baseDispatch` in a custom `dispatch` function that records `lastActionType` before calling reducer, enabling the effect to detect high-priority actions. Added useEffect hook on `state.session` that calls `scheduleSessionWrite` with `immediate` flag determined by whether the last action was in `IMMEDIATE_ACTIONS`. Effect has no cleanup (timeouts auto-cancel on re-invoke).
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 7: App.tsx rewrite to session router)
 *(Most recent updates at top)*
 
