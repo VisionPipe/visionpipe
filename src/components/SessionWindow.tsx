@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { InterleavedView } from "./InterleavedView";
 import { SplitView } from "./SplitView";
 import { Lightbox } from "./Lightbox";
+import { ReRecordModal } from "./ReRecordModal";
 import { useSession } from "../state/session-context";
 import { useMic } from "../state/mic-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
@@ -14,6 +15,16 @@ export function SessionWindow() {
   const { state, dispatch } = useSession();
   const mic = useMic();
   const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
+  const [rerecordSeq, setRerecordSeq] = useState<number | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ seq: number }>;
+      setRerecordSeq(ce.detail.seq);
+    };
+    window.addEventListener("vp-rerecord-segment", handler);
+    return () => window.removeEventListener("vp-rerecord-segment", handler);
+  }, []);
 
   if (!state.session) return null;
   const session = state.session;
@@ -100,6 +111,7 @@ export function SessionWindow() {
         busy={false}
       />
       {lightboxSeq !== null && <Lightbox seq={lightboxSeq} onClose={() => setLightboxSeq(null)} />}
+      {rerecordSeq !== null && <ReRecordModal seq={rerecordSeq} onClose={() => setRerecordSeq(null)} />}
     </div>
   );
 }
