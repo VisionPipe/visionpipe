@@ -4,6 +4,30 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 00:15 PDT — v0.3.2 (Task 18: Deepgram WebSocket client)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added the second consumer of the install token from Task 17: a thin TypeScript wrapper around the browser `WebSocket` API that connects to vp-edge's `/transcribe` endpoint with `?token=<installToken>` in the query string and surfaces Deepgram-shaped messages as a small typed event stream. The new module `src/lib/deepgram-client.ts` exports a `connectDeepgram(): Promise<DeepgramClient>` factory that (1) awaits `getOrIssueToken()` so the connection can't race the Keychain lookup, (2) opens the socket with `binaryType = "arraybuffer"` so binary frames from the wire arrive as `ArrayBuffer` rather than `Blob` (matters because the message handler decodes string-or-binary uniformly via `TextDecoder`), and (3) returns a tiny object with `send(audio: Blob)` (converts Blob → ArrayBuffer before writing — silently no-ops if the socket isn't `OPEN` yet, which is the right default for MediaRecorder chunks that may arrive during the handshake), `close()`, `onEvent(listener)` for fan-out subscriptions, and `isOpen()`. The message parser walks `data.channel.alternatives[0].transcript` (the standard Deepgram live-transcription envelope, already mirrored by the Task 16 mock) and emits `{type: "interim" | "final", text}` based on `data.is_final`; empty transcripts are dropped silently so callers aren't spammed with no-op events between utterances. Connection lifecycle (`open`, `close`, `error`) is also surfaced as events so the future Task 19 wiring in App.tsx can drive UI state (e.g., a "transcribing" indicator) without poking at the raw socket. No tests in this commit by design — jsdom's WebSocket is a stub that can't actually round-trip frames; meaningful integration tests come in Task 19 once the recorder is also in the loop. `pnpm tsc --noEmit` clean, 18/18 vitest passing (unchanged from Task 17), `pnpm vite build` 247.72 kB / 75.78 kB gzipped — still identical to Tasks 16 & 17 because nothing imports `deepgram-client.ts` yet either; both modules will inflate the bundle together when Task 19 adds the import to `App.tsx`.
+
+### Detail of changes made:
+- **New `src/lib/deepgram-client.ts`** (~50 LOC): Single export `connectDeepgram()` returning a `DeepgramClient`. The public surface is a discriminated union `TranscriptEvent` (`interim` | `final` | `open` | `close` | `error`) so consumers get exhaustive `switch` checks for free. The listeners array is intentionally append-only (no `removeEventListener` / unsubscribe) for now — this matches the planned single-consumer wiring in Task 19; if we later add a multi-pane UI we'll switch to an `unsubscribe` return value. URL is built from `import.meta.env.VITE_VP_EDGE_WS` (declared in `vite-env.d.ts` from Task 17) with a `ws://localhost:8787/transcribe` fallback that exactly matches the Task 16 mock's path.
+
+### Verification results:
+- `pnpm tsc --noEmit`: exit 0, no output.
+- `pnpm test`: 18/18 passed across 3 files in 1.49s (no new tests — Task 19 brings them in).
+- `pnpm vite build`: success, `dist/assets/index-Dh76GYT8.js 247.72 kB │ gzip: 75.78 kB` (byte-identical to Task 17's build, expected — neither install-token nor deepgram-client is imported by reachable code yet).
+
+### Potential concerns to address:
+- **No reconnect / retry strategy**: A dropped WebSocket emits `{type: "close"}` and the client object becomes a paperweight — caller must invoke `connectDeepgram()` again. Fine for Phase F's MVP (a session is one continuous recording, and a mid-session disconnect is a hard failure the user will notice), but a production build should add exponential-backoff reconnect with audio-buffer replay for the gap.
+- **Message-shape brittleness**: The parser hard-codes `data.channel.alternatives[0].transcript` and `data.is_final`. Deepgram's real wire format also includes `type: "Results"` envelopes, `metadata` messages, and `speech_final` vs `is_final` distinctions that we're currently flattening. The Task 16 mock matches the simplified shape so local dev works, but wiring against real Deepgram in a later phase will need the parser broadened (or a server-side normalization layer in vp-edge proper).
+- **`send()` swallows pre-OPEN frames**: If the recorder emits a chunk before the WebSocket finishes its handshake, the chunk is silently dropped (the `readyState !== OPEN` early-return). Acceptable for Deepgram (a few hundred ms of leading audio doesn't change transcript quality), but worth noting in case we ever route this client at a use case with stricter audio integrity needs.
+- **No explicit binary-vs-text branch on `send`**: We always convert Blob → ArrayBuffer. MediaRecorder always produces Blobs so this is fine, but if a caller ever wanted to send a JSON control message they'd have to use the raw socket — an intentional simplification for now.
+- **Bundle still tree-shaken**: Same observation as Task 17 — `deepgram-client.ts` doesn't appear in the build because no reachable module imports it. Will inflate by ~1-2 kB when Task 19 adds the App.tsx wiring.
+
+---
+
 ## Progress Update as of 2026-05-03 00:00 PDT — v0.3.2 (Task 17: Install token in macOS Keychain)
 *(Most recent updates at top)*
 
