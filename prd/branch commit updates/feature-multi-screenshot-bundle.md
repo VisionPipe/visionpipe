@@ -4,6 +4,23 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 20:35 PDT — v0.3.2 (infra: gitignore for env backups)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added `.env.local.*` glob to `.gitignore` so timestamped backups of `.env.local` (created when adding new secrets like the Deepgram API key) are automatically excluded from git history. Pure infra — no code changes.
+
+### Detail of changes made:
+
+- **`.gitignore`** — added `.env.local.*` after the existing `.env.local` line. Pattern matches `.env.local.backup-*`, `.env.local.bak`, etc. Verified with `git check-ignore -v`.
+
+### Potential concerns to address:
+
+- **None.** Pattern is conservative (only matches `.env.local.*` prefix); does not affect any other tracked files.
+
+---
+
 ## Progress Update as of 2026-05-02 19:55 PDT — v0.3.2 (no version bump; infra fix + plan kickoff)
 *(Most recent updates at top)*
 
