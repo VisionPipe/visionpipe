@@ -7,7 +7,7 @@
           {
             "type": "command",
             "if": "Bash(git commit:*)",
-            "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); fname=$(printf '%s' \"$branch\" | tr / -); expected=\"prd/branch commit updates/${fname}.md\"; if git diff --cached --name-only 2>/dev/null | grep -qxF \"$expected\"; then exit 0; else echo \"Pre-commit hook: progress log is not staged. Per CLAUDE.md, prepend an entry to 'prd/branch commit updates/${fname}.md' and stage it before committing.\" >&2; exit 2; fi"
+            "command": "input=$(cat); cmd=$(printf '%s' \"$input\" | jq -r '.tool_input.command // \"\"'); if ! printf '%s' \"$cmd\" | grep -qE '(^|[[:space:]&|;])git commit([[:space:]]|$)'; then exit 0; fi; branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); fname=$(printf '%s' \"$branch\" | tr / -); expected=\"prd/branch commit updates/${fname}.md\"; if git diff --cached --name-only 2>/dev/null | grep -qxF \"$expected\"; then exit 0; else echo \"Pre-commit hook: progress log is not staged. Per CLAUDE.md, prepend an entry to 'prd/branch commit updates/${fname}.md' and stage it before committing.\" >&2; exit 2; fi"
           }
         ]
       }
