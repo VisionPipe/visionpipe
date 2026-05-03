@@ -2,9 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>NSSpeechRecognitionUsageDescription</key>
-    <string>VisionPipe uses speech recognition to transcribe voice notes attached to your screenshots. All processing happens on-device.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Vision|Pipe uses System Events to read the active application and window title so it can include that context as metadata in your captures.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Vision|Pipe captures screenshots of the screen region you select so you can annotate them and paste them into any LLM.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Vision|Pipe uses Accessibility access so the ⌘⇧C global keyboard shortcut can trigger captures from anywhere on your Mac.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>VisionPipe uses the microphone to record voice notes that are transcribed and attached to your screenshots.</string>
+    <string>Vision|Pipe uses the microphone to record voice notes that are transcribed and attached to your screenshots.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Vision|Pipe uses speech recognition to transcribe voice notes attached to your screenshots. All processing happens on-device.</string>
 </dict>
 </plist>

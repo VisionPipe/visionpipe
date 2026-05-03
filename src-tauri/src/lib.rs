@@ -1,14 +1,15 @@
 use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Emitter,
     Manager,
 };
 
 mod audio;
+mod capture;
+mod metadata;
+mod permissions;
 mod speech;
-
-use visionpipe_core::capture;
-use visionpipe_core::metadata;
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
@@ -25,72 +26,6 @@ async fn capture_fullscreen() -> Result<String, String> {
 #[tauri::command]
 async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
     Ok(metadata::collect_metadata())
-}
-
-/// Check macOS permission status for screen recording, accessibility, microphone, and speech.
-#[tauri::command]
-async fn check_permissions() -> Result<std::collections::HashMap<String, bool>, String> {
-    use std::collections::HashMap;
-    use std::process::Command;
-
-    let mut perms = HashMap::new();
-
-    // Screen recording: attempt a tiny screencapture
-    let tmp = "/tmp/visionpipe-perm-check.png";
-    let sr = Command::new("screencapture")
-        .args(["-x", "-R", "0,0,1,1", tmp])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let sr_ok = sr.status.success() && std::fs::metadata(tmp).map(|m| m.len() > 0).unwrap_or(false);
-    let _ = std::fs::remove_file(tmp);
-    perms.insert("screen_recording".into(), sr_ok);
-
-    // Accessibility: check via AppleScript
-    let ax = Command::new("osascript")
-        .args(["-e", "tell application \"System Events\" to return name of first process"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    perms.insert("accessibility".into(), ax.status.success());
-
-    // Microphone: native check via compiled Objective-C bridge
-    perms.insert("microphone".into(), speech::is_mic_authorized());
-
-    // Speech recognition: native check
-    perms.insert("speech_recognition".into(), speech::is_speech_authorized());
-
-    Ok(perms)
-}
-
-/// Request microphone access via native API (shows system prompt from VisionPipe).
-#[tauri::command]
-async fn request_microphone_access() -> Result<bool, String> {
-    Ok(speech::request_mic_auth())
-}
-
-/// Request speech recognition access via native API (shows system prompt from VisionPipe).
-#[tauri::command]
-async fn request_speech_recognition() -> Result<bool, String> {
-    Ok(speech::request_speech_auth())
-}
-
-/// Open macOS System Settings to the appropriate permission pane.
-#[tauri::command]
-async fn open_permission_settings(permission: String) -> Result<(), String> {
-    use std::process::Command;
-
-    let url = match permission.as_str() {
-        "screen_recording" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-        "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-        _ => return Err(format!("Unknown permission: {}", permission)),
-    };
-
-    Command::new("open")
-        .arg(url)
-        .status()
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
 }
 
 /// Save PNG bytes to ~/Pictures/VisionPipe/ and set clipboard to the file
@@ -157,6 +92,18 @@ pb.writeObjects($.NSArray.arrayWithObject(item));"#,
     Ok(filepath)
 }
 
+/// Request microphone access via native API (shows system prompt from VisionPipe).
+#[tauri::command]
+async fn request_microphone_access() -> Result<bool, String> {
+    Ok(speech::request_mic_auth())
+}
+
+/// Request speech recognition access via native API (shows system prompt from VisionPipe).
+#[tauri::command]
+async fn request_speech_recognition() -> Result<bool, String> {
+    Ok(speech::request_speech_auth())
+}
+
 #[tauri::command]
 async fn start_recording() -> Result<(), String> {
     audio::start_recording()
@@ -182,24 +129,56 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // Create system tray
+            // System tray with menu (Show Onboarding, Quit)
+            let show_onboarding = MenuItem::with_id(
+                app,
+                "show_onboarding",
+                "Show Onboarding…",
+                true,
+                None::<&str>,
+            )?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit = PredefinedMenuItem::quit(app, Some("Quit VisionPipe"))?;
+            let menu = Menu::with_items(app, &[&show_onboarding, &separator, &quit])?;
+
             let _tray = TrayIconBuilder::new()
                 .tooltip("VisionPipe")
-                .on_tray_icon_event(|_tray, _event| {})
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .on_menu_event(|app, event| {
+                    if event.id.as_ref() == "show_onboarding" {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.emit("show-onboarding", ());
+                        }
+                    }
+                })
                 .build(app)?;
 
-            // Show window on startup for onboarding; frontend hides it if already completed
+            // Ensure window is hidden on startup. The frontend's mount-time
+            // useEffect will resize and show it for the welcome card.
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(600.0, 480.0)));
-                let _ = window.center();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(debug_assertions)]
-                window.open_devtools();
+                let _ = window.hide();
             }
 
-            // Register global shortcut
+            // Register global shortcuts
             use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+            // Cmd+Shift+O — re-open the onboarding window (debug/manual access)
+            let onboarding_handle = app.handle().clone();
+            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+O", move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    eprintln!("[VisionPipe] Show-onboarding shortcut triggered");
+                    if let Some(window) = onboarding_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.emit("show-onboarding", ());
+                    }
+                }
+            })?;
+
+            // Cmd+Shift+C — start capture
             let app_handle = app.handle().clone();
             app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+C", move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
@@ -233,7 +212,18 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image, check_permissions, open_permission_settings, request_microphone_access, request_speech_recognition, start_recording, stop_recording])
+        .invoke_handler(tauri::generate_handler![
+            take_screenshot,
+            capture_fullscreen,
+            get_metadata,
+            save_and_copy_image,
+            permissions::check_permissions,
+            permissions::open_settings_pane,
+            request_microphone_access,
+            request_speech_recognition,
+            start_recording,
+            stop_recording,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

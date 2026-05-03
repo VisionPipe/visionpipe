@@ -8,3 +8,6 @@ target/
 *.tsbuildinfo
 .next/
 .superpowers/
+.claude/settings.local.json
+scripts/.release-notes.md
+.homebrew-visionpipe/

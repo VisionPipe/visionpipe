@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-conf-schema/main/schema.json",
   "productName": "VisionPipe",
-  "version": "0.1.0",
-  "identifier": "com.visionpipe.app",
+  "version": "0.3.0",
+  "identifier": "com.visionpipe.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -24,21 +24,29 @@
       }
     ],
     "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": false
     },
     "security": {
       "csp": null
     }
   },
+  "plugins": {},
   "bundle": {
+    "active": true,
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/256x256.png",
       "icons/icon.icns",
       "icons/icon.png"
-    ]
-  },
-  "plugins": {}
+    ],
+    "macOS": {
+      "providerShortName": "M7GJV3YJ26",
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "10.13"
+    }
+  }
 }
