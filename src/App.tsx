@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,29 +6,125 @@ import { SessionProvider, useSession } from "./state/session-context";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
 import { IdleScreen } from "./components/IdleScreen";
+import { Onboarding } from "./components/Onboarding";
 import { generateCanonicalName } from "./lib/canonical-name";
+import type { PermissionStatus } from "./lib/permissions-types";
 import type { CaptureMetadata, Screenshot } from "./types/session";
 
-type AppMode = "idle" | "selecting" | "session";
+// "onboarding" is the initial mode on every launch. We check permissions
+// immediately and either keep showing the onboarding card (any missing) or
+// fall through to "idle". The System Events check may trigger an osascript
+// TCC prompt; showing the card first gives the user context before the
+// system dialog fires.
+type AppMode = "idle" | "onboarding" | "selecting" | "session";
 
 function AppInner() {
   const { state, dispatch } = useSession();
-  const [mode, setMode] = useState<AppMode>("idle");
+  const [mode, setMode] = useState<AppMode>("onboarding");
+  const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
+  const modeRef = useRef<AppMode>("onboarding");
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // Listen for the global hotkey event from Rust
+  // ── Show/resize/center the window for onboarding ──
+  const showOnboardingWindow = useCallback(async () => {
+    const win = getCurrentWindow();
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    await win.setSize(new LogicalSize(620, 680));
+    await win.setAlwaysOnTop(false);
+    await win.center();
+    await win.show();
+    await win.setFocus();
+  }, []);
+
+  // ── On mount: set onboarding mode immediately, then fetch permission state.
+  // Order matters: the welcome card must be visible before osascript fires
+  // its TCC prompt for System Events.
+  useEffect(() => {
+    (async () => {
+      setMode("onboarding");
+      await showOnboardingWindow();
+      try {
+        const status = await invoke<PermissionStatus>("check_permissions");
+        setPermissions(status);
+        // If all permissions are already granted on first check, skip the card.
+        if (
+          status.screenRecording &&
+          status.systemEvents &&
+          status.accessibility &&
+          status.microphone &&
+          status.speechRecognition
+        ) {
+          setMode("idle");
+          const win = getCurrentWindow();
+          await win.hide();
+        }
+      } catch (err) {
+        console.error("[VisionPipe] check_permissions failed:", err);
+      }
+    })();
+  }, [showOnboardingWindow]);
+
+  // ── Auto-poll permissions every 2 s while onboarding is visible ──
+  useEffect(() => {
+    if (mode !== "onboarding") return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await invoke<PermissionStatus>("check_permissions");
+        setPermissions(status);
+      } catch {/* ignore */}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [mode]);
+
+  // ── Listen for tray menu "Show Onboarding" event ──
+  useEffect(() => {
+    const unlisten = listen("show-onboarding", async () => {
+      try {
+        const status = await invoke<PermissionStatus>("check_permissions");
+        setPermissions(status);
+      } catch {/* ignore */}
+      setMode("onboarding");
+      await showOnboardingWindow();
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, [showOnboardingWindow]);
+
+  // ── Listen for the global hotkey event from Rust ──
   useEffect(() => {
     const unlisten = listen<string>("start-capture", () => {
+      // Ignore if not in idle mode (e.g. onboarding visible, mid-capture)
+      if (modeRef.current !== "idle") {
+        console.log("[VisionPipe] start-capture ignored, mode is", modeRef.current);
+        return;
+      }
       console.log("[VisionPipe] start-capture received");
       setMode("selecting");
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // Listen for the in-app "Take next screenshot" trigger from SessionWindow
+  // ── Listen for the in-app "Take next screenshot" trigger from SessionWindow ──
   useEffect(() => {
     const handler = () => setMode("selecting");
     window.addEventListener("vp-take-next-screenshot", handler);
     return () => window.removeEventListener("vp-take-next-screenshot", handler);
+  }, []);
+
+  // ── Re-check permissions on demand (Onboarding button click) ──
+  const recheckPermissions = useCallback(async () => {
+    try {
+      const status = await invoke<PermissionStatus>("check_permissions");
+      setPermissions(status);
+    } catch (err) {
+      console.error("[VisionPipe] recheck failed:", err);
+    }
+  }, []);
+
+  // ── Dismiss onboarding (Got it! button — only enabled when all granted) ──
+  const dismissOnboarding = useCallback(async () => {
+    setMode("idle");
+    const win = getCurrentWindow();
+    await win.hide();
   }, []);
 
   const onCapture = useCallback(async (pngBytes: Uint8Array) => {
@@ -85,6 +181,16 @@ function AppInner() {
       await win.hide();
     }
   }, [state.session]);
+
+  if (mode === "onboarding") {
+    return (
+      <Onboarding
+        permissions={permissions}
+        onRecheck={recheckPermissions}
+        onDismiss={dismissOnboarding}
+      />
+    );
+  }
 
   if (mode === "selecting") return <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} />;
   if (mode === "session" || state.session) return <SessionWindow />;

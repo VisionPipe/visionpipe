@@ -4,6 +4,24 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 23:33 PDT — v0.3.2 (Restore onboarding flow after rewrite)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Restored the first-launch onboarding flow that was dropped when App.tsx was rewritten in commit `da1c132`. The Rust side (`permissions.rs`) was fully intact; only the React UI and routing were missing. The fix adds two new files — `src/lib/permissions-types.ts` (the TypeScript mirror of `PermissionStatus`) and `src/components/Onboarding.tsx` (the welcome card with per-permission rows and deep links into System Settings) — and extends `App.tsx` with a fourth mode (`onboarding`) plus three permission-related effects: an on-mount check that sets `onboarding` mode immediately before invoking `check_permissions` (so the card is visible behind any TCC system prompt), a 2-second auto-poll while onboarding is active, and a `listen("show-onboarding", …)` handler for future tray-menu wiring. All existing behaviour is unchanged; `pnpm tsc --noEmit` is clean, 18/18 tests pass, Vite build succeeds at 238 KB.
+
+### Detail of changes made:
+- **New `src/lib/permissions-types.ts`**: `PermissionStatus` interface with camelCase fields matching Rust `serde(rename_all = "camelCase")`: `screenRecording`, `systemEvents`, `accessibility`, `microphone`, `speechRecognition`.
+- **New `src/components/Onboarding.tsx`**: Welcome card component with title bar drag region, 5 `PermissionRow` sub-components (each with "Open System Settings" deep-link button and "Re-check" button), all-granted branch with usage instructions + "Got it" dismiss button. Uses `C` palette and `FONT_BODY`/`FONT_MONO` from `ui-tokens.ts`.
+- **Modified `src/App.tsx`**: Added `"onboarding"` to `AppMode`, `permissions` state, `modeRef` for guard-gating `start-capture`, `showOnboardingWindow` helper, mount effect (set mode → resize/center/show window → check_permissions → auto-skip card if all granted), 2 s poll effect, `show-onboarding` event listener, `recheckPermissions` callback, `dismissOnboarding` callback. Routing: onboarding first, then selecting, then session/idle.
+
+### Potential concerns to address:
+- The auto-skip logic (skip onboarding card when all permissions already granted on first check) hides the window and sets mode to `idle` immediately. On truly first install this will never trigger; on re-launches after all permissions are granted the user sees a blank flash of the onboarding card before the window hides. This is acceptable and matches the pre-rewrite behaviour, but could be improved by deferring `setMode("onboarding")` until after the first `check_permissions` resolves — at the cost of losing the "card visible before TCC prompt" guarantee. Leave as-is for now.
+- The `@tauri-apps/api/dpi` dynamic import warning in the Vite build is pre-existing (carried over from the original App.tsx) and is not an error.
+
+---
+
 ## Progress Update as of 2026-05-02 21:15 PDT — v0.3.2 (Spec 1 Phase A-D complete; pause point for user)
 *(Most recent updates at top)*
 
