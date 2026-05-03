@@ -1,3 +1,25 @@
+## Progress Update as of 2026-05-02 20:45 PDT — v0.3.2 (Task 3: canonical name generator)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Implemented the canonical screenshot name generator as a pure TypeScript function with TDD methodology. Created `src/lib/canonical-name.ts` exporting `generateCanonicalName()` and `sanitizeContext()`, which convert app + URL/window title metadata into filesystem-safe 180-char-max filenames. All 8 test cases pass; tests verify URL parsing, fallback to window title, app name normalization, path-unsafe character stripping, em-dash handling, and length capping.
+
+### Detail of changes made:
+
+- **`src/lib/canonical-name.ts`** (created) — exports two pure functions:
+  - `generateCanonicalName(input: NameInput)` — builds name pattern `VisionPipe-{seq}-{timestamp}-{app}-{context}` with 3-digit zero-padded sequence, app name shortening (Google Chrome → Chrome, Visual Studio Code → VSCode, etc.), URL-to-context extraction (extracts hostname + path from URL), fallback to window title, and hard cap at 180 chars by truncating context only.
+  - `sanitizeContext(input: string)` — strips path-unsafe chars (`/\:*?"<>|—–`), collapses whitespace to dashes, collapses dash runs, and trims leading/trailing dashes.
+  - Helper `urlToContext()` — parses URL, extracts hostname + pathname, sanitizes, returns context string or empty on parse failure.
+  - Helper `shortenAppName()` — consults normalization table (Google Chrome → Chrome, etc.) or falls back to removing .app suffix and "Inc." suffix.
+- **`src/lib/__tests__/canonical-name.test.ts`** (created) — 8 test cases verifying: URL extraction, window title fallback, app-only fallback, 3-digit padding, 180-char length cap with context truncation, path-unsafe char stripping (including em-dash), dash collapse/trim, and app name normalization.
+
+### Potential concerns to address:
+
+- **None.** Pure functions with no external dependencies. TDD: tests written first, all 8 now pass. Ready for integration with capture logic in subsequent tasks.
+
+---
+
 # Branch Progress: feature/multi-screenshot-bundle
 
 This document tracks progress on the `feature/multi-screenshot-bundle` branch. It is updated with each commit and serves as a context handoff for any future LLM picking up this work.
