@@ -4,6 +4,30 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 10:00 PDT — v0.3.8 (Commit scrolling-capture source already shipped in v0.3.8 binary)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Committing user-authored scrolling-capture source files that were already present in the working tree when v0.3.8 was built (and therefore are running in the shipped binary), but had never been git-committed. This commit just lands the source on the branch so it matches the binary on remote. No behavior change vs v0.3.8.
+
+### Detail of changes made:
+
+- **`src-tauri/src/capture.rs`** — Added `capture_scrolling_region(x, y, width, height, num_scrolls)` function: captures the same region across N scroll positions, sending macOS Page Down (key code 121) via osascript between each frame with a 250 ms settle delay, then decodes all frames and stitches them vertically into a single tall PNG via `image::imageops::overlay`. Validates that all frames have a common width; bails with a clear error if not. Writes `/tmp/visionpipe-scroll-N.png` per frame and `/tmp/visionpipe-scroll-stitched.png` for the result; cleans up temp files on the way out.
+- **`src-tauri/src/lib.rs`** — Added `take_scrolling_screenshot` Tauri command (defaults to 5 frames if `num_scrolls < 2`) that wraps `capture_scrolling_region` and exposes it to the frontend. Added a `Cmd+Shift+S` global shortcut handler that mirrors the existing `Cmd+Shift+C` flow (sizes the window to monitor, shows + focuses + sets always-on-top, then emits a `start-scroll-capture` event after a 300 ms delay so the frontend can react). Registered `take_scrolling_screenshot` in the `invoke_handler` list.
+- **`src-tauri/Cargo.toml`** — `image = { version = "0.25", default-features = false, features = ["png"] }` was already present (re-added previously); supports the new stitching path.
+- **No frontend wiring yet** — no React component listens for the `start-scroll-capture` event and no UI calls `take_scrolling_screenshot`. The Rust side is shipped but inactive from the user's perspective. A frontend follow-up is needed to actually surface this to the user (likely a Cmd+Shift+S → SelectionOverlay → on-confirm-call-take_scrolling_screenshot flow).
+
+### Potential concerns to address:
+
+- **Source/binary drift was risky**: the v0.3.7 → v0.3.8 release was built from a working tree containing this uncommitted code. If the working tree had been stashed or reset between build + push, the binary would have shipped a feature with no corresponding source on remote. Catch: the release script doesn't enforce "no uncommitted source changes" before building. Worth adding a `git diff --quiet src-tauri/src` precheck to the script.
+- **`Cmd+Shift+S` global shortcut is registered but does nothing user-visible** until the frontend wires it. From the user's perspective, pressing it currently just brings the window to the foreground. Document this until the React side lands.
+- **Page Down is OS-level + non-targeted**: `osascript` sends Page Down to whatever app currently has focus. After the regular hotkey-triggered "show window" sequence, focus might still be on Vision|Pipe — meaning the scroll keys go to the Vision|Pipe window itself, not the target app. The frontend wiring will need to hide Vision|Pipe AND yield focus back to the prior app before invoking `take_scrolling_screenshot`. The Rust comment near the function notes this; the wiring needs to honor it.
+- **No tests**: the function involves real `screencapture` subprocess + osascript subprocess + temp-file IO + image decoding. End-to-end test would need a real screen + a focused-app harness; not trivial. A unit test for the stitching arithmetic (decoding fixture frames, verifying total height + width invariant) would catch the most likely regressions.
+- **Hardcoded `/tmp/visionpipe-scroll-*.png` paths** could collide if two scrolling captures run in parallel. Not a current concern (the global shortcut serializes), but if the feature ever gets a "redo" or "background" path, name with PIDs/timestamps.
+
+---
+
 ## Progress Update as of 2026-05-03 09:45 PDT — v0.3.8 (Mic entitlement fix + version badge in chrome bar)
 *(Most recent updates at top)*
 

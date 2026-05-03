@@ -26,6 +26,23 @@ async fn capture_fullscreen() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Capture a scrolling screenshot of the same region across `num_scrolls`
+/// frames, sending Page Down between each, then stitch them vertically
+/// into a single PNG. Returns a base64 data URI of the stitched image.
+/// Defaults to 5 frames if `num_scrolls` is 0 or 1.
+#[tauri::command]
+async fn take_scrolling_screenshot(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    num_scrolls: u32,
+) -> Result<String, String> {
+    let n = if num_scrolls < 2 { 5 } else { num_scrolls };
+    capture::capture_scrolling_region(x, y, width, height, n)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
     Ok(metadata::collect_metadata())
@@ -250,10 +267,42 @@ pub fn run() {
                 }
             })?;
 
+            // Cmd+Shift+S — start a SCROLLING capture: same selection
+            // overlay, but on confirm the frontend calls
+            // `take_scrolling_screenshot` instead of `take_screenshot`.
+            let scroll_handle = app.handle().clone();
+            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+S", move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    eprintln!("[VisionPipe] Scroll-capture shortcut triggered");
+                    if let Some(window) = scroll_handle.get_webview_window("main") {
+                        if let Ok(Some(monitor)) = window.current_monitor() {
+                            let size = monitor.size();
+                            let pos = monitor.position();
+                            let _ = window.set_position(tauri::Position::Physical(
+                                tauri::PhysicalPosition::new(pos.x, pos.y)
+                            ));
+                            let _ = window.set_size(tauri::Size::Physical(
+                                tauri::PhysicalSize::new(size.width, size.height)
+                            ));
+                        }
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.set_always_on_top(true);
+                        let handle = window.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                            eprintln!("[VisionPipe] Emitting start-scroll-capture");
+                            let _ = handle.emit("start-scroll-capture", "ready");
+                        });
+                    }
+                }
+            })?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             take_screenshot,
+            take_scrolling_screenshot,
             capture_fullscreen,
             get_metadata,
             save_and_copy_image,
