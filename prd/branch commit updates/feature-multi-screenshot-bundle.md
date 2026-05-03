@@ -4,6 +4,25 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 20:38 PDT — v0.3.2 (Task 1: Vitest setup)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Installed Vitest + Testing Library (React, user-event, jest-dom) as the foundation for frontend unit and integration testing throughout Spec 1. Added test scripts to package.json (test, test:watch, test:ui, dev:proxy). Created vitest.config.ts with jsdom environment and global test APIs enabled. Created src/test-setup.ts for Testing Library configuration. Verified pnpm test runs cleanly with exit code 0 and detects "no test files" state as expected.
+
+### Detail of changes made:
+
+- **`package.json`** — `pnpm add -D vitest @vitest/ui @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom @types/ws` installed 7 dev dependencies (94 transitive). Added 4 scripts: `test` (vitest run), `test:watch` (vitest), `test:ui` (vitest --ui), `dev:proxy` (node vp-edge-mock/server.mjs, intentionally references nonexistent file for now — created in Task 16). Preserved existing dev, build, tauri scripts.
+- **`vitest.config.ts`** (created) — exports Vitest config with React plugin, jsdom environment, globals enabled, setupFiles pointing to src/test-setup.ts, include pattern for *.test.ts(x) and *.spec.ts(x) under src/, passWithNoTests: true so "no tests found" exits with code 0 (expected baseline before tests are written).
+- **`src/test-setup.ts`** (created) — one-liner importing @testing-library/jest-dom/vitest to extend matchers (toBeInTheDocument, etc.).
+
+### Potential concerns to address:
+
+- **passWithNoTests: true added to vitest.config.ts** — this is a minor deviation from the original plan task description which expected "exit code 0 is fine" but didn't specify how. Vitest's default is exit code 1 when no tests found; passWithNoTests: true makes it exit 0, which aligns with the intent ("exit code 0 is fine"). This setting will be removed or clarified once tests are written and the baseline shifts. (Acceptable — improves CI/CD flow for subsequent commits that may have zero tests in their test suite mid-implementation.)
+
+---
+
 ## Progress Update as of 2026-05-02 20:35 PDT — v0.3.2 (infra: gitignore for env backups)
 *(Most recent updates at top)*
 
