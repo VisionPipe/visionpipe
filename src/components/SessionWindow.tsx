@@ -5,6 +5,7 @@ import { InterleavedView } from "./InterleavedView";
 import { SplitView } from "./SplitView";
 import { Lightbox } from "./Lightbox";
 import { ReRecordModal } from "./ReRecordModal";
+import { SettingsPanel } from "./SettingsPanel";
 import { useSession } from "../state/session-context";
 import { useMic } from "../state/mic-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
@@ -16,6 +17,7 @@ export function SessionWindow() {
   const mic = useMic();
   const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
   const [rerecordSeq, setRerecordSeq] = useState<number | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -83,7 +85,7 @@ export function SessionWindow() {
         networkState={mic.networkState}
         onToggleMic={mic.onToggle}
         onToggleViewMode={() => dispatch({ type: "TOGGLE_VIEW_MODE" })}
-        onOpenSettings={() => alert("Settings will land in Phase H")}
+        onOpenSettings={() => setSettingsOpen(true)}
         onNewSession={onNewSession}
         onOpenSessionFolder={() => alert(session.folder)}
       />
@@ -113,6 +115,7 @@ export function SessionWindow() {
       />
       {lightboxSeq !== null && <Lightbox seq={lightboxSeq} onClose={() => setLightboxSeq(null)} />}
       {rerecordSeq !== null && <ReRecordModal seq={rerecordSeq} onClose={() => setRerecordSeq(null)} />}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
