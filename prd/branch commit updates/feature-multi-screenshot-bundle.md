@@ -4,6 +4,35 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 23:40 PDT — v0.3.2 (Task 20: SplitView — fixes Detach transcript toggle)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fixed the long-broken "Detach transcript" / "Attach transcript" header button by adding the missing `SplitView` (View A) component and wiring `SessionWindow.tsx` to actually route between layouts based on `session.viewMode`. Background: the `TOGGLE_VIEW_MODE` reducer action and the Header button were already in place from Phase D, but `SessionWindow.tsx` unconditionally rendered `<InterleavedView />` regardless of the toggled state — so clicks updated reducer state but the UI never changed, making the button feel broken. The fix has three parts: (1) new `src/components/SplitView.tsx` with a 40%-width left rail of thumbnail rows (each with caption + canonicalName + 🎙/🗑 buttons, click-to-activate, click-thumbnail-to-lightbox) and a right pane of per-screenshot transcript textareas plus closing-narration; the lightbox is managed internally by SplitView so the outer SessionWindow lightbox state only governs InterleavedView. (2) `SessionWindow.tsx` now ternaries on `session.viewMode === "interleaved"` to render either view; the `<main>` wrapper switched from `overflow: "auto"` to `overflow: "hidden"` so SplitView can manage its own column scrolling. (3) `App.tsx` persists `state.session.viewMode` to `localStorage` under key `vp-default-view` whenever it changes, and the `START_SESSION` dispatch in `onCapture` now reads that key (defaulting to `"interleaved"`) so the next session opens in the user's preferred layout. `pnpm tsc --noEmit` clean, 18/18 tests pass, Vite build succeeds at 243 KB (74 KB gzipped).
+
+### Detail of changes made:
+- **New `src/components/SplitView.tsx`** (~110 LOC): Two-column flex layout. Left `<aside>` (40% width, `C.deepForest` bg, `C.border` right divider): maps `session.screenshots` to thumbnail rows with internal `activeSeq` state highlighting the current row in `C.forest`/`C.teal`; thumbnail click stops propagation and opens internal lightbox; row click sets activeSeq; mini 🎙/🗑 buttons fire `onRequestRerecord(s.seq)`/`onRequestDelete(s.seq)`; "+ Take next screenshot" dashed button at bottom. Right `<section>` (flex: 1): per-screenshot `--- Screenshot N — <canonicalName> ---` heading (clickable to set activeSeq) + `transcriptSegment` textarea wired to `UPDATE_TRANSCRIPT_SEGMENT`; closing narration textarea wired to `UPDATE_CLOSING_NARRATION`. `<Lightbox>` rendered when `lightboxSeq !== null`. Tiny `miniBtn()` helper for the 22×22 row buttons.
+- **Modified `src/components/SessionWindow.tsx`**: Added `import { SplitView } from "./SplitView"`. Replaced the single `<InterleavedView />` render with a `session.viewMode === "interleaved" ? ... : <SplitView ... />` ternary; switched `<main>` overflow from `"auto"` to `"hidden"` so SplitView handles its own column scrolling (InterleavedView retains scroll via the inner `<div style={{ height: "100%", overflow: "auto" }}>`). All other wiring (`takeNext`, `requestDelete`, `requestRerecord`, `onCopyAndSend`, the outer `lightboxSeq` for InterleavedView) is unchanged.
+- **Modified `src/App.tsx`**: Added a one-line useEffect (placed just before `recheckPermissions`) that `localStorage.setItem("vp-default-view", state.session.viewMode)` whenever the session viewMode changes. In `onCapture`, when starting a fresh session, read `localStorage.getItem("vp-default-view")` (typed as `"interleaved" | "split" | null`, defaulting to `"interleaved"`) and pass it as the new session's `viewMode` instead of the hardcoded `"interleaved"`.
+
+### Toggle data flow (post-fix):
+1. User clicks "Detach transcript" in Header → `onToggleViewMode` → `dispatch({ type: "TOGGLE_VIEW_MODE" })`.
+2. Reducer flips `session.viewMode` between `"interleaved"` and `"split"` and updates `updatedAt`.
+3. `SessionWindow` re-renders; the new ternary picks `<SplitView />` (or `<InterleavedView />`).
+4. The Header label and the underlying layout now stay in sync.
+5. Side-effect: `App.tsx` useEffect writes the new viewMode to `localStorage["vp-default-view"]`, so the user's choice survives session boundaries.
+
+### Known bugs to address later:
+- The onboarding screen's "Open System Settings" button for Speech Recognition may not deep-link correctly on recent macOS versions (the `Privacy_SpeechRecognition` URL scheme has changed). User flagged this on 2026-05-02 23:36 PDT; investigate the right URL for macOS 14+ in a future fix.
+
+### Potential concerns to address:
+- SplitView's internal `activeSeq` state is component-local; toggling between Split and Interleaved discards it (initialized from the last screenshot on mount). If we later want active-card persistence across the toggle, it would need to live in the session reducer. Acceptable for v1 since the active highlight is purely cosmetic.
+- The `vp-default-view` localStorage write fires on every viewMode change (including the first START_SESSION). Cheap and bounded to the two strings; not worth gating.
+- The two pre-existing Vite "dynamically imported but also statically imported" warnings for `@tauri-apps/api/window` and `/dpi` are unchanged.
+
+---
+
 ## Progress Update as of 2026-05-02 23:36 PDT — v0.3.2 (Session window sizes to ~70% after capture)
 *(Most recent updates at top)*
 

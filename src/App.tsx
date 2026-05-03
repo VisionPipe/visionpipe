@@ -110,6 +110,11 @@ function AppInner() {
     return () => window.removeEventListener("vp-take-next-screenshot", handler);
   }, []);
 
+  // ── Persist last-used viewMode to localStorage as a per-user preference ──
+  useEffect(() => {
+    if (state.session) localStorage.setItem("vp-default-view", state.session.viewMode);
+  }, [state.session?.viewMode]);
+
   // ── Re-check permissions on demand (Onboarding button click) ──
   const recheckPermissions = useCallback(async () => {
     try {
@@ -135,11 +140,12 @@ function AppInner() {
     let folder = state.session?.folder;
     if (!state.session) {
       folder = await invoke<string>("create_session_folder", { sessionId });
+      const defaultView = (localStorage.getItem("vp-default-view") as "interleaved" | "split" | null) ?? "interleaved";
       dispatch({
         type: "START_SESSION",
         session: {
           id: sessionId, folder, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-          audioFile: "audio-master.webm", viewMode: "interleaved",
+          audioFile: "audio-master.webm", viewMode: defaultView,
           screenshots: [], closingNarration: "",
         },
       });

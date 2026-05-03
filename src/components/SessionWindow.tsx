@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { InterleavedView } from "./InterleavedView";
+import { SplitView } from "./SplitView";
 import { Lightbox } from "./Lightbox";
 import { useSession } from "../state/session-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
@@ -51,13 +52,23 @@ export function SessionWindow() {
         onNewSession={() => dispatch({ type: "END_SESSION" })}
         onOpenSessionFolder={() => alert(session.folder)}
       />
-      <main style={{ flex: 1, overflow: "auto" }}>
-        <InterleavedView
-          onTakeNextScreenshot={takeNext}
-          onRequestRerecord={requestRerecord}
-          onRequestDelete={requestDelete}
-          onOpenLightbox={setLightboxSeq}
-        />
+      <main style={{ flex: 1, overflow: "hidden" }}>
+        {session.viewMode === "interleaved" ? (
+          <div style={{ height: "100%", overflow: "auto" }}>
+            <InterleavedView
+              onTakeNextScreenshot={takeNext}
+              onRequestRerecord={requestRerecord}
+              onRequestDelete={requestDelete}
+              onOpenLightbox={setLightboxSeq}
+            />
+          </div>
+        ) : (
+          <SplitView
+            onTakeNextScreenshot={takeNext}
+            onRequestRerecord={requestRerecord}
+            onRequestDelete={requestDelete}
+          />
+        )}
       </main>
       <Footer
         onTakeNextScreenshot={takeNext}
