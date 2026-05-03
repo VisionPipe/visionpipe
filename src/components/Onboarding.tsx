@@ -33,6 +33,43 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
     }
   };
 
+  // For microphone + speech recognition, calling the Apple SDK request
+  // function FIRST is what triggers the native macOS permission prompt and
+  // adds Vision|Pipe to the TCC database. Without that, System Settings →
+  // Privacy → Microphone shows an empty list with no "+" button (Apple
+  // doesn't allow manual mic-permission adds). After requesting, we
+  // re-check and only open Settings as a fallback if the user has
+  // previously denied (request returns false instantly without prompting).
+  const requestMic = async () => {
+    try {
+      const granted = await invoke<boolean>("request_microphone_access");
+      await onRecheck();
+      if (!granted) {
+        // Either user just denied, or they previously denied; either way,
+        // give them a path to flip the toggle manually in Settings.
+        await openPane("microphone");
+      }
+    } catch (e) {
+      console.error("[VisionPipe] request_microphone_access failed:", e);
+      await openPane("microphone");
+    }
+  };
+
+  const requestSpeech = async () => {
+    try {
+      const granted = await invoke<boolean>("request_speech_recognition");
+      await onRecheck();
+      if (!granted) {
+        // The Privacy_SpeechRecognition URL scheme is unreliable on macOS
+        // 14+, but try anyway as a fallback.
+        await openPane("speech_recognition");
+      }
+    } catch (e) {
+      console.error("[VisionPipe] request_speech_recognition failed:", e);
+      await openPane("speech_recognition");
+    }
+  };
+
   return (
     <div style={{
       width: "100vw", height: "100vh",
@@ -99,16 +136,18 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
               <PermissionRow
                 granted={!!permissions?.microphone}
                 label="Microphone"
-                description="Optional — enables voice notes attached to your captures. Click Allow when macOS asks."
-                onOpen={() => openPane("microphone")}
+                description="Optional — enables voice notes attached to your captures. Click Grant access, then click Allow on the macOS prompt that appears."
+                onOpen={requestMic}
                 onRecheck={onRecheck}
+                buttonLabel="Grant access"
               />
               <PermissionRow
                 granted={!!permissions?.speechRecognition}
                 label="Speech Recognition"
-                description="Optional — enables on-device transcription of your voice notes. Nothing leaves your Mac."
-                onOpen={() => openPane("speech_recognition")}
+                description="Optional — enables on-device transcription of your voice notes via Apple's Speech framework. Nothing leaves your Mac for this. Click Grant access to trigger the macOS prompt."
+                onOpen={requestSpeech}
                 onRecheck={onRecheck}
+                buttonLabel="Grant access"
               />
             </>
           ) : (
@@ -179,13 +218,14 @@ function KbdKey({ children }: { children: React.ReactNode }) {
 
 // ── Single permission row ──
 function PermissionRow({
-  granted, label, description, onOpen, onRecheck,
+  granted, label, description, onOpen, onRecheck, buttonLabel = "Open System Settings",
 }: {
   granted: boolean;
   label: string;
   description: string;
   onOpen: () => void;
   onRecheck: () => Promise<void> | void;
+  buttonLabel?: string;
 }) {
   const [checking, setChecking] = useState(false);
 
@@ -225,7 +265,7 @@ function PermissionRow({
             cursor: "pointer", fontWeight: 600,
           }}
         >
-          Open System Settings
+          {buttonLabel}
         </button>
         <button
           onClick={handleRecheck}

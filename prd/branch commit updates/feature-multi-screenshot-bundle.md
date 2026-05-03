@@ -4,6 +4,28 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 09:30 PDT — v0.3.6 (Fix mic + speech recognition onboarding buttons)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fixed two related onboarding bugs the user surfaced while smoke-testing v0.3.6: clicking the Microphone "Open System Settings" button took the user to a privacy pane that didn't list Vision|Pipe (with no "+" to manually add it), and clicking the Speech Recognition button opened a blank Settings page. Both bugs share a root cause — the buttons only opened System Settings via URL scheme, but on macOS, an app must FIRST call the relevant Apple SDK function (which triggers the native macOS permission prompt and adds the app to the TCC database) before it appears in System Settings → Privacy → Microphone (or Speech Recognition). Apple does not allow manual mic-permission adds via a "+" button. Existing Tauri commands `request_microphone_access` and `request_speech_recognition` (in `src-tauri/src/lib.rs:99-108`, calling `speech.rs:request_mic_auth` / `request_speech_auth` via Objective-C FFI) already do the right thing — they just weren't being called from the onboarding UI.
+
+### Detail of changes made:
+
+- **`src/components/Onboarding.tsx`** — Added `requestMic()` and `requestSpeech()` async helpers that call `invoke("request_microphone_access")` / `invoke("request_speech_recognition")` first (triggers the native macOS prompt + TCC entry), re-check permissions, and only fall through to opening System Settings as a fallback if the user denied. Wired the Microphone and Speech Recognition `PermissionRow` components to use these new handlers (was: `onOpen={() => openPane(...)}`, now: `onOpen={requestMic}` / `onOpen={requestSpeech}`).
+- **`src/components/Onboarding.tsx`** — Added optional `buttonLabel?: string` prop to `PermissionRow` (defaults to "Open System Settings"). For the mic + speech rows, set to "Grant access" since clicking those now triggers a native prompt rather than opening Settings directly.
+- **`src/components/Onboarding.tsx`** — Updated the descriptions for the mic + speech rows to explain that clicking will trigger the macOS prompt (was misleading before — mentioned macOS asking but didn't explain how).
+- **Other 3 permission rows unchanged** — Screen Recording / System Events / Accessibility still use `openPane(...)` because those permissions don't have the same TCC-via-SDK pattern (the user must manually toggle in Settings, often after dragging the app from /Applications into the list).
+
+### Potential concerns to address:
+
+- **Doesn't help users who already denied** — if Vision|Pipe was previously denied microphone access, calling `request_microphone_access` returns `false` immediately without re-prompting (Apple's design). The fallback `openPane("microphone")` then opens Settings. From v0.3.6 fresh-install state, the user should NOT hit this — they're a new user with no prior decision recorded. Worth verifying on the user's machine whether their Vision|Pipe install is "first time asked" or "previously denied."
+- **`Privacy_SpeechRecognition` URL scheme remains broken on macOS 14+** — that's why the speech-recognition fallback `openPane(...)` may still open a blank page. Mitigation: the Apple SDK call (which now runs first) is the actual mechanism that grants. The Settings open is purely a fallback for the previously-denied case. Worst case the user sees a blank Settings page after granting — they can ignore it.
+- **No automated test coverage** — these are TCC interactions that can't be exercised in jsdom. Manual verification only.
+
+---
+
 ## Progress Update as of 2026-05-03 08:45 PDT — v0.3.3 (README accuracy pass)
 *(Most recent updates at top)*
 
