@@ -160,7 +160,8 @@ function AppInner() {
     const handler = async () => {
       try {
         const win = getCurrentWindow();
-        const monitor = await win.currentMonitor();
+        const { currentMonitor } = await import("@tauri-apps/api/window");
+        const monitor = await currentMonitor();
         if (monitor) {
           const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
           await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));

@@ -4,6 +4,38 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 10:00 PDT — v0.4.0 (Bug fixes + ScreenshotCard layout restructure with lucide icons)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Three bug fixes + a substantial UX restructure of the ScreenshotCard, all in one commit per user request to ship together. (1) Fixed the macOS traffic-light dots colliding with "Vision|Pipe" / session-id text in the SessionWindow Header by adding 80px left padding and a minHeight of 32px. (2) Fixed the second-capture selection-area-too-small bug by resizing the window to fullscreen in the vp-take-next-screenshot handler before transitioning to selecting mode (the Rust hotkey path already did this; only the in-app "+" button was broken). (3) Fixed Copy & Send silently swallowing errors by wrapping the action in try/catch and surfacing success/failure as a 3-second toast in the bottom-right of the session window. (4) Major ScreenshotCard layout rewrite per spec: image is now full-width of its column on the left, X delete button overlaid in the image's top-right corner, editable caption ("name") + canonicalName as a tiny muted line beneath the image; transcript column on the right with a "Re-record" button beside the "NARRATION" label. Image+transcript are now side-by-side per card so each transcript pairs with its own image (no more independent stacking). Replaced 🎙 + 🗑 emoji icons with `lucide-react` SVG icons (Mic, X, Clipboard) — modern, crisp at any size, ~3KB tree-shaken. (5) Removed the Footer's "Take next screenshot" button (the in-card "+" already serves this purpose).
+
+### Detail of changes made:
+
+- **`package.json`** — Added `lucide-react` dep (~600 KB on disk, tree-shakes per-icon to ~600 bytes each in the final bundle).
+- **`src/components/Header.tsx`** — Added `data-tauri-drag-region` so the chrome bar is draggable. Padding changed from `"10px 16px"` to `"10px 16px 10px 80px"` so brand+session-id clear macOS traffic-light dots when titleBarStyle: "Overlay". Added `minHeight: 32` to give the dots breathing room and so vertical-center on the text matches the dots' center.
+- **`src/App.tsx`** — Rewrote the `vp-take-next-screenshot` event handler. Was a 1-line `setMode("selecting")`; now imports `currentMonitor` from `@tauri-apps/api/window`, resizes the window to monitor.size + repositions to monitor.position before showing+focusing+always-on-top. The Rust hotkey path already did this for first-capture; the in-app "+" path needed it too. Without this fix, after the first capture (which shrinks the window to 70%×85%), pressing "+" left the window small — the SelectionOverlay covered only the small window, so the user couldn't draw a region across the full screen.
+- **`src/components/SessionWindow.tsx`** — Added `toast` state (3-second auto-dismiss via useEffect), wrapped `onCopyAndSend` in try/catch with success/error toast, rendered the toast as a fixed-position bottom-right pill (green border on success, red on error). Updated Footer prop usage (no more `onTakeNextScreenshot`).
+- **`src/components/Footer.tsx`** — Removed the "Take next screenshot" button entirely (was a duplicate of the in-card "+"). Footer now contains only the "Copy & Send" button (right-aligned), prefixed with a lucide Clipboard icon.
+- **`src/components/ScreenshotCard.tsx`** — Wholesale rewrite of layout:
+  - Outer flex row, two equal columns (`flex: 1` each), `gap: 16`, `alignItems: flex-start`.
+  - LEFT column: image with `width: "100%"` (fills column); `position: relative` wrapper holds an X button absolutely positioned at top-right (rounded, semi-transparent dark background, lucide X icon stroke 2.5). Image click still opens lightbox. Below image: editable caption (placeholder "Add a name…") + tiny muted canonicalName beneath that.
+  - RIGHT column: top row has "NARRATION" label (left) + "Re-record" button with lucide Mic icon (right). Below: full-height textarea (`flex: 1`, `minHeight: 140`).
+  - Removed inline 🎙 and 🗑 emoji buttons from the prior layout — Mic is now in the transcript column where it semantically belongs (it's about the transcript), X is overlaid on the image where deletion is naturally targeted.
+  - Replaced "Add a caption…" → "Add a name…" since the user thinks of this field as the screenshot's name.
+
+### Potential concerns to address:
+
+- **Window resize on "+ Take next screenshot" briefly flashes the fullscreen before the SelectionOverlay paints** — same flash as the regular hotkey path. Could be smoothed with `setAlwaysOnTop` ordering or a hide-during-resize trick, but matches existing behavior.
+- **Footer no longer has any spacer button on the left** — the empty left side might feel unbalanced in the header/footer symmetry. If feedback says it looks empty, could add a subtle "session-{id}" or screenshot count there.
+- **The X delete button has no confirmation prompt** in this commit — it still triggers the existing `confirm()` dialog inherited from `requestDelete`. If we want to make deletion friendlier, swap for an undo-capable soft-delete with a "Undo" toast.
+- **The image column is now exactly 50% of card width** (via `flex: 1` on both columns). For very wide windows, the image may be too big; for narrow ones, too small. Tunable later (e.g., `flex: 1.2` on image column to bias toward the visual).
+- **Caption font size bumped from 12 → 13** to match transcript textarea — slightly more prominent. Easy to revert if it feels too loud.
+- **`canonicalName` truncates with ellipsis at single-line width** — full name visible only via tooltip. Acceptable for the muted line treatment.
+
+---
+
 ## Progress Update as of 2026-05-03 10:00 PDT — v0.3.8 (Defer mic onboarding + welcome-card cleanup)
 *(Most recent updates at top)*
 

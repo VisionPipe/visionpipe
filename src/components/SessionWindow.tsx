@@ -18,6 +18,15 @@ export function SessionWindow() {
   const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
   const [rerecordSeq, setRerecordSeq] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Toast state for Copy & Send feedback (auto-dismisses after 3s).
+  // Was added because the action used to silently swallow failures —
+  // user couldn't tell whether the click did anything.
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(id);
+  }, [toast]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -31,14 +40,29 @@ export function SessionWindow() {
   // Memoized so the keyboard-shortcut listener effect below doesn't
   // re-attach on every render. Depends on state.session (folder + content).
   const onCopyAndSend = useCallback(async () => {
-    if (!state.session) return;
+    if (!state.session) {
+      setToast({ kind: "err", text: "No active session to copy." });
+      return;
+    }
     const session = state.session;
-    const md = renderMarkdown(session);
-    await writeText(md);
-    const bytes = new TextEncoder().encode(md);
-    await invoke("write_session_file", {
-      folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
-    });
+    try {
+      const md = renderMarkdown(session);
+      await writeText(md);
+      const bytes = new TextEncoder().encode(md);
+      await invoke("write_session_file", {
+        folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
+      });
+      setToast({
+        kind: "ok",
+        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript to clipboard. Paste into Claude Code or any LLM.`,
+      });
+    } catch (err) {
+      console.error("[VisionPipe] Copy & Send failed:", err);
+      setToast({
+        kind: "err",
+        text: `Copy & Send failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   }, [state.session]);
 
   // Listen for the window-scoped Copy & Send hotkey dispatched by App.tsx.
@@ -119,11 +143,23 @@ export function SessionWindow() {
         )}
       </main>
       <Footer
-        onTakeNextScreenshot={takeNext}
         onCopyAndSend={onCopyAndSend}
         copyTooltip={`Copies markdown for ${session.screenshots.length} screenshots + transcript`}
         busy={false}
       />
+      {/* Toast for Copy & Send feedback */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 70, right: 20, maxWidth: 400, zIndex: 1200,
+          padding: "10px 14px", borderRadius: 6,
+          background: toast.kind === "ok" ? "#1a3a2a" : "#3a1a1a",
+          border: `1px solid ${toast.kind === "ok" ? "#2e8b7a" : "#c0462a"}`,
+          color: "#e8efe9", fontSize: 12, fontFamily: "Verdana, sans-serif",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+        }}>
+          {toast.text}
+        </div>
+      )}
       {lightboxSeq !== null && <Lightbox seq={lightboxSeq} onClose={() => setLightboxSeq(null)} />}
       {rerecordSeq !== null && <ReRecordModal seq={rerecordSeq} onClose={() => setRerecordSeq(null)} />}
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
