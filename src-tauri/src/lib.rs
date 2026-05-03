@@ -115,6 +115,12 @@ fn build_tray_menu(
     items.push(Box::new(MenuItem::with_id(
         app, "show_onboarding", "Show Onboarding…", true, None::<&str>,
     )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "reveal_logs", "Reveal Logs in Finder…", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "save_diagnostic_bundle", "Save Diagnostic Bundle…", true, None::<&str>,
+    )?));
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
     items.push(Box::new(PredefinedMenuItem::quit(app, Some("Quit Vision|Pipe"))?));
 
@@ -243,6 +249,95 @@ pb.writeObjects($.NSArray.arrayWithObject(item));"#,
     Ok(filepath)
 }
 
+/// Reveal the active log file in Finder. The Tauri log plugin writes to
+/// `~/Library/Logs/com.visionpipe.desktop/visionpipe.log` with daily rotation.
+#[tauri::command]
+fn reveal_logs_in_finder() -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let log_dir = format!("{}/Library/Logs/com.visionpipe.desktop", home);
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("open")
+        .arg(&log_dir)
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Bundle the current logs + version + macOS system info into a zip in
+/// ~/Downloads, then reveal it in Finder. Nothing leaves the user's Mac
+/// — the zip is purely for them to drag into a chat or email when they
+/// want to share diagnostic info.
+#[tauri::command]
+fn save_diagnostic_bundle() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let zip_basename = format!("visionpipe-diagnostic-{}", timestamp);
+    let zip_path = format!("{}/Downloads/{}.zip", home, zip_basename);
+
+    // Build the bundle in a /tmp staging dir so the zip's internal paths
+    // are clean (just `version.txt`, `system.txt`, `logs/...`).
+    let staging = format!("/tmp/{}", zip_basename);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+
+    // Copy log directory if it exists.
+    let log_dir = format!("{}/Library/Logs/com.visionpipe.desktop", home);
+    if std::fs::metadata(&log_dir).is_ok() {
+        let _ = std::process::Command::new("cp")
+            .args(["-R", &log_dir, &format!("{}/logs", staging)])
+            .status();
+    }
+
+    // version.txt
+    let version_txt = format!(
+        "Vision|Pipe v{}\nbuilt: {}\n",
+        env!("CARGO_PKG_VERSION"),
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z"),
+    );
+    let _ = std::fs::write(format!("{}/version.txt", staging), version_txt);
+
+    // system.txt
+    let sw_vers = std::process::Command::new("sw_vers")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let model = std::process::Command::new("sysctl")
+        .args(["-n", "hw.model"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let cpu = std::process::Command::new("sysctl")
+        .args(["-n", "machdep.cpu.brand_string"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let system_txt = format!(
+        "=== sw_vers ===\n{}\n=== Model ===\n{}\n=== CPU ===\n{}\n",
+        sw_vers, model, cpu
+    );
+    let _ = std::fs::write(format!("{}/system.txt", staging), system_txt);
+
+    // Zip up the staging dir (cd into /tmp so zip paths are relative).
+    let status = std::process::Command::new("zip")
+        .current_dir("/tmp")
+        .args(["-rq", &zip_path, &zip_basename])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("zip command failed".into());
+    }
+
+    // Cleanup staging.
+    let _ = std::fs::remove_dir_all(&staging);
+
+    // Reveal the zip in Finder so the user can drag it into a chat.
+    let _ = std::process::Command::new("open")
+        .args(["-R", &zip_path])
+        .status();
+
+    log::info!("Diagnostic bundle saved to {}", zip_path);
+    Ok(zip_path)
+}
+
 /// Request microphone access via native API (shows system prompt from VisionPipe).
 #[tauri::command]
 async fn request_microphone_access() -> Result<bool, String> {
@@ -309,7 +404,33 @@ async fn save_hotkey_config(cfg: hotkey_config::HotkeyConfig) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Default log level: info. Override with VISIONPIPE_LOG_LEVEL=debug
+    // for verbose dev / diagnostic output. The `log` plugin writes to:
+    //   - stdout (visible in Console.app via `log show --process visionpipe`)
+    //   - file: ~/Library/Logs/com.visionpipe.desktop/visionpipe.log (rotated daily)
+    //   - webview: forwards Rust log lines into JS console (ignored in prod webview but visible during dev)
+    let log_level = match std::env::var("VISIONPIPE_LOG_LEVEL").ok().as_deref() {
+        Some("trace") => log::LevelFilter::Trace,
+        Some("debug") => log::LevelFilter::Debug,
+        Some("warn") => log::LevelFilter::Warn,
+        Some("error") => log::LevelFilter::Error,
+        _ => log::LevelFilter::Info,
+    };
+    let log_plugin = tauri_plugin_log::Builder::default()
+        .targets([
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                file_name: Some("visionpipe".to_string()),
+            }),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+        ])
+        .level(log_level)
+        .max_file_size(5_000_000) // 5 MB rotation
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+        .build();
+
     tauri::Builder::default()
+        .plugin(log_plugin)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -366,6 +487,15 @@ pub fn run() {
                                 let dir = format!("{}/Pictures/VisionPipe", home);
                                 let _ = std::fs::create_dir_all(&dir);
                                 let _ = std::process::Command::new("open").arg(&dir).status();
+                            }
+                        }
+                        "reveal_logs" => {
+                            let _ = reveal_logs_in_finder();
+                        }
+                        "save_diagnostic_bundle" => {
+                            match save_diagnostic_bundle() {
+                                Ok(path) => log::info!("Diagnostic bundle: {}", path),
+                                Err(e) => log::error!("Diagnostic bundle failed: {}", e),
                             }
                         }
                         _ if id.starts_with("recent_") => {
@@ -486,6 +616,8 @@ pub fn run() {
             save_and_copy_image,
             permissions::check_permissions,
             permissions::open_settings_pane,
+            reveal_logs_in_finder,
+            save_diagnostic_bundle,
             request_microphone_access,
             request_speech_recognition,
             start_recording,

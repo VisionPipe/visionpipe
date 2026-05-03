@@ -1,6 +1,6 @@
 [package]
 name = "visionpipe"
-version = "0.4.3"
+version = "0.5.0"
 description = "Screenshot to AI in one keystroke"
 authors = ["VisionPipe"]
 edition = "2021"
@@ -20,7 +20,9 @@ embed_plist = "1"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

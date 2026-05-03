@@ -4,6 +4,35 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 10:42 PDT — v0.5.0
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Persistent app-level logging shipped. Vision|Pipe now writes a daily-rotated log file to `~/Library/Logs/com.visionpipe.desktop/visionpipe.log` capturing both Rust-side logs and JavaScript console output (which was previously invisible because devtools are disabled in production builds). Two new tray menu items make it easy to find or share these logs: "Reveal Logs in Finder…" opens the log directory, and "Save Diagnostic Bundle…" zips up the current logs + version + macOS system info into `~/Downloads/` and reveals the zip in Finder so users can drag it into a chat with us when something goes wrong. Bumping minor because of the new infrastructure + new tray items.
+
+### Detail of changes made:
+
+- **`src-tauri/Cargo.toml`** — Added `tauri-plugin-log = "2"` and `log = "0.4"` dependencies.
+- **`package.json`** — Added `@tauri-apps/plugin-log` for the JS bridge.
+- **`src-tauri/src/lib.rs`** — Initialized `tauri-plugin-log` with three targets (Stdout, LogDir with file_name "visionpipe", Webview), level driven by `VISIONPIPE_LOG_LEVEL` env var (defaults to Info; supports trace/debug/info/warn/error). Daily rotation via `KeepAll` strategy with 5 MB max file size.
+- **`src-tauri/src/lib.rs`** — New `reveal_logs_in_finder` Tauri command: opens `~/Library/Logs/com.visionpipe.desktop/` in Finder, creating the directory if it doesn't exist yet.
+- **`src-tauri/src/lib.rs`** — New `save_diagnostic_bundle` Tauri command: copies the log directory into a `/tmp` staging dir, writes `version.txt` (Vision|Pipe version + build timestamp) and `system.txt` (`sw_vers`, `hw.model`, `cpu.brand_string`), zips the staging dir into `~/Downloads/visionpipe-diagnostic-YYYYMMDD-HHMMSS.zip`, then reveals the zip in Finder. Cleans up staging after.
+- **`src-tauri/src/lib.rs`** — Tray menu now has two new entries: "Reveal Logs in Finder…" and "Save Diagnostic Bundle…", placed right under "Show Onboarding…" and above the Quit separator.
+- **`src/main.tsx`** — Bridge installed BEFORE React mounts: `console.log/warn/error/debug` now also call the log plugin's corresponding functions, so all JS console output flows into the file. Added `window.onerror` and `unhandledrejection` listeners that forward to `logError` so frontend crashes are captured even if no `console.error` was called. Original console methods still execute first, so dev devtools see everything as before.
+- **`src-tauri/capabilities/default.json`** — Added `log:default` permission so the JS plugin bridge can call into the Rust log plugin.
+- **Privacy**: The diagnostic bundle is purely local — the file lands in your Downloads folder and stays there until you choose to share it. Nothing is uploaded to any server. No analytics. The log file itself contains app events + JS console output; if you want to inspect it before sharing, "Reveal Logs in Finder…" gets you there.
+
+### Potential concerns to address:
+
+- **Existing `eprintln!` calls in lib.rs are not yet migrated to `log::info!`/`error!`** — they still go to stderr (visible via `log show --process visionpipe`) but don't land in the new persistent log file. Migrating them is a mechanical follow-up; everything still works during the transition because both paths are alive.
+- **Log file can grow** to 5 MB before rotation, and `KeepAll` keeps every rotated file. On heavy use over months that adds up. Worth switching to `KeepLastN(7)` (one week) or pruning old logs in `save_diagnostic_bundle`.
+- **`log:default` permission grants the JS side access to all log levels.** Acceptable for our use; if we ever ship a third-party JS dependency that does noisy logging, it'd land in the file too. Worth narrowing if that becomes a concern.
+- **The diagnostic bundle does NOT include**: TCC permission state per-service, `~/Pictures/VisionPipe/` directory listing, or the user's `.release-notes.md`. Adding those is a one-liner each if it'd help diagnose specific issues.
+
+---
+
+
 ## Progress Update as of 2026-05-03 10:33 PDT — v0.4.3
 *(Most recent updates at top)*
 
