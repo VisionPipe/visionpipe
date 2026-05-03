@@ -4,6 +4,36 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 00:00 PDT — v0.3.2 (Task 17: Install token in macOS Keychain)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Continued Phase F (Deepgram integration) by adding per-install token management on top of last commit's vp-edge mock. The token is the credential VisionPipe will eventually present to the production `vp-edge` proxy on every transcription WebSocket — it's how the proxy attributes usage to a single installation for rate limiting (60 min/day in production) without baking a Deepgram API key into the desktop binary. This commit gives the desktop app two halves: (1) a Rust module + Tauri commands that read/write the token in the macOS Keychain via the `keyring` crate (service `com.visionpipe.desktop.vp-edge-token`, account `default`), and (2) a TS wrapper `getOrIssueToken()` that first asks Keychain, and on cache miss POSTs to `${VITE_VP_EDGE_HTTP}/install` (default `http://localhost:8787` matching the mock from Task 16) to mint a fresh UUID, then persists it back to Keychain so subsequent boots are offline-friendly. The Keychain entry survives app reinstalls and is encrypted at rest by macOS — exactly what we want for a long-lived install identifier. `cargo check` succeeded in 51s with only the pre-existing 7 warnings (no new ones); the `keyring` v3.6.3 crate added a surprisingly tiny dependency footprint — only `log` and `zeroize`, both already in the tree — because on macOS it links directly to Apple's Security framework with no extra Rust deps. `pnpm tsc --noEmit` clean, 18/18 vitest passing, `pnpm vite build` 247.72 kB / 75.78 kB gzipped (unchanged — the new TS module isn't imported anywhere yet, so it tree-shook out, which is expected and will resolve once Task 18 wires the Deepgram client).
+
+### Detail of changes made:
+- **`src-tauri/Cargo.toml`**: Added `keyring = "3"` to the `[dependencies]` block, slotted right after the existing `dirs = "5"` line so the macOS-flavored deps stay grouped.
+- **New `src-tauri/src/install_token.rs`** (~18 LOC): Two functions on top of `keyring::Entry`. `save_token(&str) -> Result<(), String>` constructs an entry for `(SERVICE, ACCOUNT)` and calls `set_password`. `load_token() -> Result<Option<String>, String>` returns `Ok(Some(t))` on hit, `Ok(None)` specifically when the underlying error is `keyring::Error::NoEntry` (so first-boot is not a hard error), and `Err(e.to_string())` for everything else (Keychain locked, system error, etc.). Service string is namespaced to `com.visionpipe.desktop.vp-edge-token` so future products under the same Apple ID don't collide.
+- **`src-tauri/src/lib.rs`**: Added `mod install_token;` to the alphabetized `mod` block (between `capture` and `metadata`). Added two `#[tauri::command] async fn` thin wrappers — `save_install_token(token: String)` and `load_install_token()` — that delegate to the module. Appended both names to the existing `tauri::generate_handler![…]` array so they're invokable from JS via `@tauri-apps/api/core`'s `invoke()`.
+- **New `src/lib/install-token.ts`** (~14 LOC): `getOrIssueToken()` first calls `invoke<string | null>("load_install_token")`. If hit, returns immediately. If miss, fetches `POST ${VP_EDGE_HTTP}/install`, parses `{ token }` from the response, persists via `invoke("save_install_token", { token })`, and returns the new token. `VP_EDGE_HTTP` reads `import.meta.env.VITE_VP_EDGE_HTTP` with a `http://localhost:8787` fallback that matches the Task 16 mock's default port.
+- **`src/vite-env.d.ts`**: Added `interface ImportMetaEnv` with optional `VITE_VP_EDGE_HTTP?: string` and `VITE_VP_EDGE_WS?: string` fields, plus the matching `interface ImportMeta { readonly env: ImportMetaEnv }` declaration. Kept the existing `*.png` module declaration and the `vite/client` triple-slash directive untouched.
+- **`Cargo.lock`** (workspace root, not `src-tauri/Cargo.lock` — confirmed via `git status`): Records `keyring 3.6.3` plus its 2-dep transitive closure. Both `src-tauri/Cargo.lock` and the root `Cargo.lock` exist in this repo, but only the root one was modified by the resolver.
+
+### Verification results:
+- `cd src-tauri && cargo check`: `Finished dev profile … in 51.36s`. 7 warnings (all pre-existing — `TYPE_APPLICATION_BUNDLE_ID`, `TYPE_WILD_CARD`, AE FFI fns flagged unused; not introduced by this commit).
+- `pnpm tsc --noEmit`: exit 0, no output.
+- `pnpm test`: 18/18 passed across 3 files in 1.68s.
+- `pnpm vite build`: success, `dist/assets/index-Dh76GYT8.js 247.72 kB │ gzip: 75.78 kB`.
+
+### Potential concerns to address:
+- **No retry / backoff on `/install`**: If `vp-edge` is unreachable (network down, mock not running), `getOrIssueToken()` rejects on the first failure. Acceptable for local dev — the user is running the mock themselves and will see the error in console — but the production app should add retry-with-backoff so a transient blip doesn't permanently break onboarding.
+- **No "rotate token" path**: There's no Tauri command to clear the Keychain entry. If a token is revoked server-side (e.g., user blew through their daily quota and the proxy bans the UUID), the desktop app will keep presenting the dead token forever. We'll likely need a `clear_install_token` command + a frontend UI hook before launching publicly.
+- **Service-string lock-in**: Once any user runs the app, their Keychain has an entry under `com.visionpipe.desktop.vp-edge-token`. Renaming this string later would orphan all existing tokens (cosmetic but mildly annoying). Pinning it now while there are zero real users is the right call.
+- **Tree-shaken in this build**: `pnpm vite build` output bytes are identical to Task 16 because nothing imports `src/lib/install-token.ts` yet. Task 18 (Deepgram WebSocket client) is the first consumer and will inflate the bundle by a few hundred bytes.
+- **Keyring on Linux/Windows**: The crate works cross-platform (uses Secret Service / Credential Manager respectively), but this codebase only ships macOS for now. If we ever cross-compile, we should verify `keyring` doesn't pull additional system libs (e.g., `libdbus` on Linux) into the build.
+
+---
+
 ## Progress Update as of 2026-05-02 23:54 PDT — v0.3.2 (Task 16: vp-edge mock proxy server)
 *(Most recent updates at top)*
 

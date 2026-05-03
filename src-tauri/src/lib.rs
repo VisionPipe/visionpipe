@@ -7,6 +7,7 @@ use tauri::{
 
 mod audio;
 mod capture;
+mod install_token;
 mod metadata;
 mod permissions;
 mod session;
@@ -137,6 +138,16 @@ async fn move_to_deleted(folder: String, filename: String) -> Result<(), String>
     session::move_to_deleted(&folder, &filename)
 }
 
+#[tauri::command]
+async fn save_install_token(token: String) -> Result<(), String> {
+    install_token::save_token(&token)
+}
+
+#[tauri::command]
+async fn load_install_token() -> Result<Option<String>, String> {
+    install_token::load_token()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -242,6 +253,8 @@ pub fn run() {
             create_session_folder,
             write_session_file,
             move_to_deleted,
+            save_install_token,
+            load_install_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
