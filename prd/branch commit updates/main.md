@@ -4,6 +4,24 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-02 19:24 PDT — v0.3.2
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fresh rebuild requested by user — no source changes since v0.3.1. Useful as the single definitive "current" version after a string of test builds, so brew + website + locally-mounted DMGs all agree on one number.
+
+### Detail of changes made:
+
+- No source code changes since v0.3.1.
+
+### Potential concerns to address:
+
+- Same outstanding items: voice UI not yet wired to `start_recording`/`stop_recording`, and `src-tauri/src/{capture,metadata}.rs` duplicates the corresponding files in `crates/visionpipe-core/`.
+
+---
+
+
 ## Progress Update as of 2026-05-02 19:21 PDT — v0.3.1
 *(Most recent updates at top)*
 
