@@ -39,6 +39,12 @@ export function SessionWindow() {
 
   // Memoized so the keyboard-shortcut listener effect below doesn't
   // re-attach on every render. Depends on state.session (folder + content).
+  //
+  // Writes transcript.md to disk AND puts it on the clipboard with TWO
+  // representations: the markdown body (paste into chat / Claude Code as
+  // text) and a file URL (paste into Finder produces a .md file; drag
+  // into Claude Code attaches as a file Read can open). The dual-rep
+  // pattern is the same as save_and_copy_image (PNG bytes + file URL).
   const onCopyAndSend = useCallback(async () => {
     if (!state.session) {
       setToast({ kind: "err", text: "No active session to copy." });
@@ -47,21 +53,36 @@ export function SessionWindow() {
     const session = state.session;
     try {
       const md = renderMarkdown(session);
-      await writeText(md);
-      const bytes = new TextEncoder().encode(md);
-      await invoke("write_session_file", {
-        folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
+      const path = await invoke<string>("save_and_copy_markdown", {
+        folder: session.folder,
+        markdown: md,
       });
       setToast({
         kind: "ok",
-        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript to clipboard. Paste into Claude Code or any LLM.`,
+        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript. Paste as text in chat, OR paste in Finder to drop a .md file (saved at ${path}).`,
       });
     } catch (err) {
       console.error("[VisionPipe] Copy & Send failed:", err);
-      setToast({
-        kind: "err",
-        text: `Copy & Send failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      // Last-resort fallback: try the old text-only clipboard write so the
+      // user gets *something*. They can manually copy the file from the
+      // session folder if needed.
+      try {
+        const md = renderMarkdown(session);
+        await writeText(md);
+        const bytes = new TextEncoder().encode(md);
+        await invoke("write_session_file", {
+          folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
+        });
+        setToast({
+          kind: "ok",
+          text: `Copied as text only (file-clipboard failed). transcript.md is in the session folder.`,
+        });
+      } catch (innerErr) {
+        setToast({
+          kind: "err",
+          text: `Copy & Send failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
     }
   }, [state.session]);
 

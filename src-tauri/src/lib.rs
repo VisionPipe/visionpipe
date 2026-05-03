@@ -19,6 +19,26 @@ mod speech;
 /// capture). Lock held briefly during click dispatch.
 struct RecentCapturesState(Mutex<Vec<String>>);
 
+/// Stashed metadata captured at hotkey-press time (BEFORE Vision|Pipe
+/// steals focus). The frontend's `get_metadata` Tauri command reads + takes
+/// from this; if empty, falls back to live collection (which would return
+/// `app: "visionpipe"` since by then VP is frontmost). One-shot per
+/// hotkey press — consumed by the next `get_metadata` call.
+struct StashedMetadata(Mutex<Option<metadata::CaptureMetadata>>);
+
+/// Stash the current frontmost-app metadata. Called from every capture
+/// trigger (Cmd+Shift+C, Cmd+Shift+S, tray "Take Capture", tray "Take
+/// Scrolling Capture") BEFORE any window operations. The collection is
+/// fast (~5-30ms of osascript + system_profiler calls).
+fn stash_current_metadata(app: &AppHandle) {
+    let snapshot = metadata::collect_metadata();
+    if let Some(state) = app.try_state::<StashedMetadata>() {
+        if let Ok(mut slot) = state.0.lock() {
+            *slot = Some(snapshot);
+        }
+    }
+}
+
 /// List the up-to-5 most recent .png files in ~/Pictures/VisionPipe/
 /// sorted by mtime descending. Returns (display_label, full_path) pairs.
 /// `display_label` is a human-readable timestamp like "2:42 PM (region)".
@@ -178,8 +198,99 @@ async fn take_scrolling_screenshot(
 }
 
 #[tauri::command]
-async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
-    Ok(metadata::collect_metadata())
+async fn get_metadata(state: tauri::State<'_, StashedMetadata>) -> Result<metadata::CaptureMetadata, String> {
+    // Take (consume) the stashed metadata if present so the next capture
+    // gets a fresh snapshot. If nothing is stashed (e.g. capture flow
+    // wasn't triggered through one of our handlers), fall back to live
+    // collection — which will return Vision|Pipe as the active app since
+    // VP is now frontmost. That's the bug we were trying to fix; the
+    // stash is the primary path.
+    let stashed = state.0.lock().ok().and_then(|mut s| s.take());
+    Ok(stashed.unwrap_or_else(metadata::collect_metadata))
+}
+
+/// Hide Vision|Pipe (so macOS auto-restores focus to the previously
+/// frontmost app), wait briefly for that focus shift, then capture the
+/// frontmost-app metadata into the stash. Used by the in-app
+/// "+ Take next screenshot" path: when the user clicks the button,
+/// VP is currently frontmost, so we need to step out of the way first.
+/// The frontend awaits this, then proceeds with the resize + selection
+/// overlay. ~250ms latency is imperceptible.
+#[tauri::command]
+async fn prepare_in_app_capture(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    // Give macOS a moment to refocus the previous app.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    stash_current_metadata(&app);
+    Ok(())
+}
+
+/// Write the markdown body to `<folder>/transcript.md` AND copy that
+/// file's path onto the macOS NSPasteboard as BOTH a string (the body
+/// text, for paste-into-text-editor) AND a file URL (for paste-into-Finder
+/// or drag-into-Claude-Code-as-file). Mirrors the dual-representation
+/// pattern in `save_and_copy_image`. Returns the absolute path to the
+/// written transcript.md.
+#[tauri::command]
+async fn save_and_copy_markdown(folder: String, markdown: String) -> Result<String, String> {
+    use std::fs;
+    use std::process::Command;
+
+    let path = std::path::PathBuf::from(&folder).join("transcript.md");
+    fs::write(&path, &markdown).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    let path_str = path.to_string_lossy().to_string();
+
+    // Build a JXA script that writes a single NSPasteboardItem with both
+    // representations. Inline the markdown body as a JS-escaped string
+    // (newlines + double-quotes need escaping). The file URL representation
+    // points at the just-written transcript.md so paste-into-Finder yields
+    // the file (not a copy of the text).
+    let escaped_body = markdown
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    let escaped_path = path_str.replace('\\', "\\\\").replace('"', "\\\"");
+
+    let jxa_script = format!(
+        r#"ObjC.import('AppKit');
+ObjC.import('Foundation');
+var path = "{}";
+var body = "{}";
+var url = $.NSURL.fileURLWithPath(path);
+
+var item = $.NSPasteboardItem.alloc.init;
+item.setStringForType(body, $.NSPasteboardTypeString);
+item.setStringForType(url.absoluteString.js, $.NSPasteboardTypeFileURL);
+
+var pb = $.NSPasteboard.generalPasteboard;
+pb.clearContents;
+pb.writeObjects($.NSArray.arrayWithObject(item));"#,
+        escaped_path, escaped_body
+    );
+
+    let output = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &jxa_script])
+        .output()
+        .map_err(|e| format!("osascript spawn failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[VisionPipe] save_and_copy_markdown JXA failed: {}", stderr);
+        // Fallback: at least put the text on the clipboard via pbcopy so
+        // Copy & Send isn't completely broken if NSPasteboard fails.
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '%s' \"$1\" | pbcopy", ).as_str())
+            .arg("_")
+            .arg(&markdown)
+            .status();
+        return Err(format!("clipboard write failed: {}", stderr));
+    }
+
+    Ok(path_str)
 }
 
 /// Save PNG bytes to ~/Pictures/VisionPipe/ and set clipboard to the file
@@ -450,6 +561,10 @@ pub fn run() {
             // shared mutex of recent paths so click dispatch can resolve
             // `recent_<N>` IDs back to the actual file path.
             app.manage(RecentCapturesState(Mutex::new(Vec::new())));
+            // Stashed-metadata slot. Populated by every capture-trigger
+            // path (hotkey, tray, in-app "+") BEFORE VP takes focus.
+            // Drained by the next get_metadata invocation.
+            app.manage(StashedMetadata(Mutex::new(None)));
             let initial_recents = list_recent_captures();
             if let Some(state) = app.try_state::<RecentCapturesState>() {
                 if let Ok(mut paths) = state.0.lock() {
@@ -473,11 +588,17 @@ pub fn run() {
                             }
                         }
                         "take_capture" => {
+                            // Capture metadata BEFORE Vision|Pipe steals focus from the tray dismiss.
+                            // The tray menu was open over the user's previous app; closing it
+                            // restores focus there. By the time get_metadata runs in JS, VP
+                            // would be frontmost and would self-report as the active app.
+                            stash_current_metadata(app);
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.emit("start-capture", "tray");
                             }
                         }
                         "take_scrolling_capture" => {
+                            stash_current_metadata(app);
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.emit("start-scroll-capture", "tray");
                             }
@@ -548,6 +669,11 @@ pub fn run() {
             app.global_shortcut().on_shortcut(global_combo.as_str(), move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
                     eprintln!("[VisionPipe] Shortcut triggered!");
+                    // CRITICAL: capture metadata BEFORE we show + focus the
+                    // window. Once VP has focus, `metadata::collect_metadata()`
+                    // would report VP itself as the active app — yielding the
+                    // "App: visionpipe" garbage in the markdown output.
+                    stash_current_metadata(&app_handle);
                     if let Some(window) = app_handle.get_webview_window("main") {
                         // Size window to fill the screen
                         if let Ok(Some(monitor)) = window.current_monitor() {
@@ -582,6 +708,9 @@ pub fn run() {
             app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+S", move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
                     eprintln!("[VisionPipe] Scroll-capture shortcut triggered");
+                    // Same as the regular hotkey: capture metadata before
+                    // Vision|Pipe steals focus.
+                    stash_current_metadata(&scroll_handle);
                     if let Some(window) = scroll_handle.get_webview_window("main") {
                         if let Ok(Some(monitor)) = window.current_monitor() {
                             let size = monitor.size();
@@ -613,7 +742,9 @@ pub fn run() {
             take_scrolling_screenshot,
             capture_fullscreen,
             get_metadata,
+            prepare_in_app_capture,
             save_and_copy_image,
+            save_and_copy_markdown,
             permissions::check_permissions,
             permissions::open_settings_pane,
             reveal_logs_in_finder,

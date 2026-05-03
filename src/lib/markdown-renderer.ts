@@ -9,7 +9,18 @@ const formatDuration = (sec: number): string => {
 const sessionDurationSec = (session: Session): number => {
   if (session.screenshots.length === 0) return 0;
   const last = session.screenshots[session.screenshots.length - 1];
-  return last.audioOffset.end ?? last.audioOffset.start;
+  // Prefer audio-based duration (most accurate) when the recorder ran.
+  const audioBased = last.audioOffset.end ?? last.audioOffset.start;
+  if (audioBased > 0) return audioBased;
+  // Fallback: wall-clock between first and last capturedAt. Used when
+  // mic onboarding hasn't been completed (recorder never started).
+  const first = session.screenshots[0];
+  const firstMs = new Date(first.capturedAt).getTime();
+  const lastMs = new Date(last.capturedAt).getTime();
+  if (Number.isFinite(firstMs) && Number.isFinite(lastMs) && lastMs >= firstMs) {
+    return Math.round((lastMs - firstMs) / 1000);
+  }
+  return 0;
 };
 
 const friendlyTs = (iso: string): string => {

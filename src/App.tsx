@@ -159,6 +159,14 @@ function AppInner() {
   useEffect(() => {
     const handler = async () => {
       try {
+        // Step 1: hide VP + capture metadata of the previously frontmost
+        // app (the user's actual target, not Vision|Pipe). Without this
+        // the markdown's "App: …" line would say "visionpipe" because by
+        // the time get_metadata runs, VP would still be focused.
+        await invoke("prepare_in_app_capture");
+
+        // Step 2: now that metadata is stashed, resize VP to fullscreen
+        // for the SelectionOverlay.
         const win = getCurrentWindow();
         const { currentMonitor } = await import("@tauri-apps/api/window");
         const monitor = await currentMonitor();
@@ -171,7 +179,7 @@ function AppInner() {
         await win.setFocus();
         await win.setAlwaysOnTop(true);
       } catch (err) {
-        console.warn("[VisionPipe] vp-take-next-screenshot resize failed:", err);
+        console.warn("[VisionPipe] vp-take-next-screenshot prepare failed:", err);
       }
       setCaptureMode("region");
       setMode("selecting");
@@ -358,7 +366,12 @@ function AppInner() {
 
   const onCapture = useCallback(async (pngBytes: Uint8Array) => {
     const metadata = await invoke<CaptureMetadata>("get_metadata");
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    // Local-time YYYY-MM-DD_HH-MM-SS (matches the canonical-name spec).
+    // Previously used ISO with `T` separator which produced names like
+    // VisionPipe-001-2026-05-03T17-53-27 — the spec wants underscore.
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
     const sessionId = state.session?.id ?? ts;
 
     let folder = state.session?.folder;
