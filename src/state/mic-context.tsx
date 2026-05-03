@@ -10,6 +10,8 @@ export interface MicCtx {
   networkState: NetworkState;
   /** Clear the master recorder ref (called after session-end audio flush). */
   clearRecorder: () => void;
+  /** Close the Deepgram WebSocket and reset network state to local-only. */
+  closeDeepgram: () => void;
 }
 
 const MicContext = createContext<MicCtx | null>(null);

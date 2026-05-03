@@ -9,9 +9,11 @@ import { SessionWindow } from "./components/SessionWindow";
 import { IdleScreen } from "./components/IdleScreen";
 import { Onboarding } from "./components/Onboarding";
 import { createRecorder, type RecorderHandle } from "./lib/audio-recorder";
+import { connectDeepgram, type DeepgramClient, type TranscriptEvent } from "./lib/deepgram-client";
 import { generateCanonicalName } from "./lib/canonical-name";
 import type { PermissionStatus } from "./lib/permissions-types";
 import type { CaptureMetadata, Screenshot } from "./types/session";
+import type { NetworkState } from "./components/Header";
 
 // "onboarding" is the initial mode on every launch. We check permissions
 // immediately and either keep showing the onboarding card (any missing) or
@@ -36,6 +38,18 @@ function AppInner() {
   const recorderRef = useRef<RecorderHandle | null>(null);
   const [micRecording, setMicRecording] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+
+  // ── Deepgram WebSocket lifecycle ──
+  // Connects in parallel with the master recorder on first capture. Failure
+  // (or a mid-session drop after one retry) flips us into `local-only` mode
+  // and any new screenshots taken in that state are stamped `offline: true`.
+  // `sessionRef` mirrors `state.session` so the async `dg.onEvent` callback
+  // (closure-captured at connect time) always sees the latest screenshot list
+  // when deciding whether to append to the active segment vs. closing narration.
+  const dgRef = useRef<DeepgramClient | null>(null);
+  const [networkState, setNetworkState] = useState<NetworkState>("local-only");
+  const sessionRef = useRef(state.session);
+  useEffect(() => { sessionRef.current = state.session; }, [state.session]);
 
   // ── Show/resize/center the window for onboarding ──
   const showOnboardingWindow = useCallback(async () => {
@@ -169,6 +183,67 @@ function AppInner() {
           recorderRef.current = await createRecorder();
           await recorderRef.current.start();
           setMicRecording(true);
+
+          // ── Wire MediaRecorder chunks → Deepgram WebSocket ──
+          // The recorder fan-outs each 1s chunk to all listeners; we add a
+          // listener that forwards into the dg socket (the dg client itself
+          // silently no-ops if the socket isn't OPEN yet, so we don't have to
+          // gate on connection state here).
+          recorderRef.current.onChunk((chunk) => {
+            dgRef.current?.send(chunk);
+          });
+
+          // ── Shared transcript-event handler used by both the initial
+          // connect and the single retry attempt below. Pulled into a closure
+          // here so the retry path doesn't have to re-reference `dispatch` /
+          // `sessionRef` from a potentially stale snapshot.
+          const handleFinal = (text: string) => {
+            const withSpace = text + " ";
+            if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
+              dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: withSpace });
+            } else {
+              dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: withSpace });
+            }
+          };
+
+          // ── Connect Deepgram (best-effort) ──
+          // If the initial connect throws (no network, edge down, token
+          // issuance failed), settle straight into local-only — we don't
+          // bother with a retry storm; the user will start a new session if
+          // they want to try again. Mid-session drops get one retry after 3s,
+          // then settle into local-only permanently.
+          try {
+            const dg = await connectDeepgram();
+            dgRef.current = dg;
+            dg.onEvent((e: TranscriptEvent) => {
+              if (e.type === "open") {
+                setNetworkState("live");
+              } else if (e.type === "close" || e.type === "error") {
+                setNetworkState("reconnecting");
+                // One retry, then settle. Avoids reconnect storm.
+                setTimeout(async () => {
+                  try {
+                    const dg2 = await connectDeepgram();
+                    dgRef.current = dg2;
+                    dg2.onEvent((e2: TranscriptEvent) => {
+                      if (e2.type === "open") setNetworkState("live");
+                      else if (e2.type === "close" || e2.type === "error") setNetworkState("local-only");
+                      else if (e2.type === "final") handleFinal(e2.text);
+                      // interim events: skipped on the retry path for simplicity
+                    });
+                  } catch {
+                    setNetworkState("local-only");
+                  }
+                }, 3000);
+              } else if (e.type === "final") {
+                handleFinal(e.text);
+              }
+              // Interim events: skip for v0.2 (live preview = future polish)
+            });
+          } catch (err) {
+            console.warn("[VisionPipe] Deepgram connect failed (offline mode):", err);
+            setNetworkState("local-only");
+          }
         } catch (err) {
           console.warn("[VisionPipe] Mic permission denied or recorder init failed:", err);
           setMicPermissionDenied(true);
@@ -190,7 +265,7 @@ function AppInner() {
       seq, canonicalName, capturedAt: new Date().toISOString(),
       audioOffset: { start: 0, end: null }, // reducer overwrites .start using audioElapsedSec; placeholder safe
       caption: "", transcriptSegment: "", reRecordedAudio: null,
-      metadata, offline: false,
+      metadata, offline: networkState !== "live",
     };
     dispatch({ type: "APPEND_SCREENSHOT", screenshot, audioElapsedSec: recorderRef.current?.elapsedSec() ?? 0 });
 
@@ -263,6 +338,15 @@ function AppInner() {
     setMicRecording(false);
   }, []);
 
+  // ── Close the Deepgram WebSocket and reset network state.
+  // Exposed via MicContext so SessionWindow's "New session" handler can tear
+  // down the live transcription stream alongside the master recorder.
+  const closeDeepgram = useCallback(() => {
+    dgRef.current?.close();
+    dgRef.current = null;
+    setNetworkState("local-only");
+  }, []);
+
   // ── Flush master audio on window close / app quit ──
   // The browser fires `beforeunload` when the Tauri window is being torn down.
   // We stop the recorder, await the Blob, and synchronously kick off a write
@@ -285,6 +369,12 @@ function AppInner() {
         } catch (err) {
           console.warn("[VisionPipe] Audio flush failed on close:", err);
         }
+      }
+      // Tear down the Deepgram socket if it's still open. Best-effort: a hard
+      // process kill won't run this, but a clean window close will.
+      if (dgRef.current) {
+        try { dgRef.current.close(); } catch { /* ignore */ }
+        dgRef.current = null;
       }
     };
     window.addEventListener("beforeunload", handler);
@@ -314,8 +404,9 @@ function AppInner() {
       permissionDenied: micPermissionDenied,
       onToggle: onToggleMic,
       recorder: recorderRef.current,
-      networkState: "local-only",
+      networkState,
       clearRecorder,
+      closeDeepgram,
     }}>
       {view}
     </MicProvider>

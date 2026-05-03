@@ -71,6 +71,7 @@ export function SessionWindow() {
       }
     }
     mic.clearRecorder();
+    mic.closeDeepgram();
     dispatch({ type: "END_SESSION" });
   };
 
