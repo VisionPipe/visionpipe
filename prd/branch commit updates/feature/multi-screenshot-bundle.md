@@ -4,6 +4,33 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 11:22 PDT — v0.5.1
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Release v0.5.1 (auto-generated entry — no `scripts/.release-notes.md` was provided).
+
+### Detail of changes made:
+
+- On-device transcription + click-to-expand + detached layout rewrite + Re-record gating
+- Fix metadata-at-hotkey-press, canonicalName format, duration; Copy & Send writes file
+- Release v0.5.0
+- Release v0.4.3
+- Bug fixes + ScreenshotCard layout restructure with lucide icons
+- Release v0.4.1
+- Defer mic onboarding to first mic-button click + welcome card cleanup
+- Release v0.4.0
+- Commit scrolling-capture source already shipped in v0.3.8 binary
+- Release v0.3.8
+
+### Potential concerns to address:
+
+- Auto-generated entry; a human-written summary would be more useful for future LLM context.
+
+---
+
+
 ## Progress Update as of 2026-05-03 10:42 PDT — v0.5.0
 *(Most recent updates at top)*
 

@@ -39,10 +39,37 @@ fn stash_current_metadata(app: &AppHandle) {
     }
 }
 
-/// List the up-to-5 most recent .png files in ~/Pictures/VisionPipe/
-/// sorted by mtime descending. Returns (display_label, full_path) pairs.
-/// `display_label` is a human-readable timestamp like "2:42 PM (region)".
-fn list_recent_captures() -> Vec<(String, String)> {
+/// Summary of a single VisionPipe session, used by both the tray menu
+/// and the in-app History Hub. Built lazily from the session folder
+/// contents (transcript.json if present; otherwise filesystem-derived).
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub folder: String,
+    /// ISO-8601 UTC, fallback to folder mtime if transcript.json is missing.
+    pub created_at: String,
+    /// Friendly label like "Today at 9:42 AM" — used in tray menus.
+    pub label: String,
+    pub screenshot_count: usize,
+    /// First non-empty caption from the session, if any. Used as the
+    /// row's primary identifying text in the history view.
+    pub first_caption: Option<String>,
+    /// First ~120 chars of the first non-empty transcriptSegment.
+    /// Used as a row preview. None if no transcripts.
+    pub transcript_snippet: Option<String>,
+    /// Absolute paths to the first 3 .png files in the folder, used
+    /// for thumbnail icons in the history row.
+    pub thumbnail_paths: Vec<String>,
+    /// Path to transcript.md if it exists (i.e. user has done Copy & Send
+    /// on this session at least once). Drag-source for history rows.
+    pub transcript_md_path: Option<String>,
+}
+
+/// Read all `session-*` directories under ~/Pictures/VisionPipe/, parse
+/// metadata from each, and return up to `limit` sessions sorted by
+/// folder mtime descending (most recent first).
+fn list_recent_sessions(limit: usize) -> Vec<SessionSummary> {
     let home = match std::env::var("HOME") {
         Ok(h) => h,
         Err(_) => return Vec::new(),
@@ -53,45 +80,162 @@ fn list_recent_captures() -> Vec<(String, String)> {
         Err(_) => return Vec::new(),
     };
 
-    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+    let mut folders: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let p = e.path();
-            if p.extension().and_then(|s| s.to_str()) != Some("png") {
+            if !p.is_dir() {
+                return None;
+            }
+            let name = p.file_name()?.to_str()?.to_string();
+            if !name.starts_with("session-") {
                 return None;
             }
             let mtime = e.metadata().ok().and_then(|m| m.modified().ok())?;
             Some((mtime, p))
         })
         .collect();
-    files.sort_by(|a, b| b.0.cmp(&a.0));
-    files.truncate(5);
+    folders.sort_by(|a, b| b.0.cmp(&a.0));
+    folders.truncate(limit);
 
-    files
+    folders
         .into_iter()
-        .map(|(mtime, path)| {
-            let label = format_capture_label(&path, mtime);
-            (label, path.to_string_lossy().to_string())
-        })
+        .map(|(mtime, folder)| build_session_summary(&folder, mtime))
         .collect()
 }
 
-/// Format a capture filename + mtime into a friendly menu label.
-/// Filenames look like `VisionPipe_2026-05-03_09-42-13.png`.
-fn format_capture_label(path: &std::path::Path, mtime: std::time::SystemTime) -> String {
-    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("capture");
-    // Use the local time of last modification as the display.
+fn build_session_summary(folder: &std::path::Path, mtime: std::time::SystemTime) -> SessionSummary {
+    let folder_str = folder.to_string_lossy().to_string();
+    let id = folder.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("session")
+        .to_string();
+
+    // Try transcript.json first for accurate metadata.
+    let transcript_json = folder.join("transcript.json");
+    let parsed: Option<serde_json::Value> = std::fs::read_to_string(&transcript_json)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+
     let dt: chrono::DateTime<chrono::Local> = mtime.into();
     let now = chrono::Local::now();
     let same_day = dt.date_naive() == now.date_naive();
     let time_part = dt.format("%-I:%M %p").to_string();
-    if same_day {
+    let label = if same_day {
         format!("Today at {}", time_part)
     } else {
         format!("{} at {}", dt.format("%b %-d").to_string(), time_part)
+    };
+
+    let mut screenshot_count = 0usize;
+    let mut first_caption: Option<String> = None;
+    let mut transcript_snippet: Option<String> = None;
+    let mut created_at = chrono::DateTime::<chrono::Utc>::from(mtime).to_rfc3339();
+
+    if let Some(p) = &parsed {
+        if let Some(s) = p.get("createdAt").and_then(|v| v.as_str()) {
+            created_at = s.to_string();
+        }
+        if let Some(arr) = p.get("screenshots").and_then(|v| v.as_array()) {
+            screenshot_count = arr.len();
+            for s in arr {
+                if first_caption.is_none() {
+                    if let Some(c) = s.get("caption").and_then(|v| v.as_str()) {
+                        if !c.is_empty() {
+                            first_caption = Some(c.to_string());
+                        }
+                    }
+                }
+                if transcript_snippet.is_none() {
+                    if let Some(t) = s.get("transcriptSegment").and_then(|v| v.as_str()) {
+                        if !t.is_empty() {
+                            let trimmed: String = t.chars().take(120).collect();
+                            transcript_snippet = Some(trimmed);
+                        }
+                    }
+                }
+                if first_caption.is_some() && transcript_snippet.is_some() {
+                    break;
+                }
+            }
+        }
     }
-    .clone()
-    + &format!(" — {}", name.trim_end_matches(".png").trim_start_matches("VisionPipe_"))
+
+    // Thumbnails: first 3 PNGs in the folder, sorted by name (which
+    // mirrors capture order since canonicalNames start with seq).
+    let mut pngs: Vec<std::path::PathBuf> = std::fs::read_dir(folder)
+        .ok()
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("png"))
+                .collect()
+        })
+        .unwrap_or_default();
+    pngs.sort();
+    let thumbnail_paths: Vec<String> = pngs
+        .into_iter()
+        .take(3)
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    // If no transcript.json, count screenshots from PNG files.
+    if parsed.is_none() {
+        screenshot_count = thumbnail_paths.len(); // approximate
+    }
+
+    let transcript_md = folder.join("transcript.md");
+    let transcript_md_path = if transcript_md.is_file() {
+        Some(transcript_md.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    SessionSummary {
+        id,
+        folder: folder_str,
+        created_at,
+        label,
+        screenshot_count,
+        first_caption,
+        transcript_snippet,
+        thumbnail_paths,
+        transcript_md_path,
+    }
+}
+
+/// Return a concise tray-menu label for a session: time + count + caption.
+fn format_session_menu_label(s: &SessionSummary) -> String {
+    let count_part = if s.screenshot_count == 1 {
+        "1 screenshot".to_string()
+    } else {
+        format!("{} screenshots", s.screenshot_count)
+    };
+    let caption_part = s.first_caption.as_ref()
+        .map(|c| {
+            let trimmed: String = c.chars().take(40).collect();
+            format!(" — \"{}\"", trimmed)
+        })
+        .unwrap_or_default();
+    format!("{} · {}{}", s.label, count_part, caption_part)
+}
+
+/// Tauri command: return up to `limit` recent session summaries for the
+/// frontend History Hub.
+#[tauri::command]
+async fn list_recent_sessions_cmd(limit: Option<usize>) -> Result<Vec<SessionSummary>, String> {
+    Ok(list_recent_sessions(limit.unwrap_or(50)))
+}
+
+/// Reveal a file in Finder by selecting it (`open -R <path>`).
+/// Used by tray-menu session click + history row "Show in Finder" actions.
+#[tauri::command]
+async fn reveal_in_finder(path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .args(["-R", &path])
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Build the tray menu from the current recent-captures list.
