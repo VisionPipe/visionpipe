@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { InterleavedView } from "./InterleavedView";
+import { Lightbox } from "./Lightbox";
 import { useSession } from "../state/session-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -9,9 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export function SessionWindow() {
   const { state, dispatch } = useSession();
-  // Lightbox seq is tracked here but a real Lightbox component is added in Task 12.
-  // For now we just store the value (no UI surface).
-  const [, setLightboxSeq] = useState<number | null>(null);
+  const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
 
   if (!state.session) return null;
   const session = state.session;
@@ -66,6 +65,7 @@ export function SessionWindow() {
         copyTooltip={`Copies markdown for ${session.screenshots.length} screenshots + transcript`}
         busy={false}
       />
+      {lightboxSeq !== null && <Lightbox seq={lightboxSeq} onClose={() => setLightboxSeq(null)} />}
     </div>
   );
 }

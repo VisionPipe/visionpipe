@@ -1,3 +1,21 @@
+## Progress Update as of 2026-05-02 21:08 PDT — v0.3.2 (Task 12: Lightbox)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Implemented the Lightbox component for full-resolution screenshot viewing. Created `src/components/Lightbox.tsx` — a fixed-position modal overlay that displays a single screenshot at maximum size (95vw × 95vh with teal glow shadow) with dark semi-transparent background (rgba(0,0,0,0.92)). The Lightbox receives a `seq` number, looks up the corresponding screenshot from the session context, uses `convertFileSrc` to build the Tauri asset URL, and renders an `<img>` element. The modal closes on click (anywhere on overlay) or Escape key press. Updated `src/components/SessionWindow.tsx` to import and conditionally render the Lightbox: changed the lightboxSeq state from a discarded setter to an actual value, and added a conditional render line at the end of the JSX tree. TypeScript: 0 errors; all 18 tests still pass; Vite build: 228 KB JS bundle.
+
+### Detail of changes made:
+
+- **`src/components/Lightbox.tsx`** (created) — exports `Lightbox` component with `Props` interface: `seq` (number), `onClose` (callback). Uses `useSession()` to read the session, finds the screenshot by `seq` using `findIndex()`, and builds the Tauri asset URL via `convertFileSrc`. Fixed-position overlay div with inset: 0 (fullscreen), background rgba(0,0,0,0.92), flexbox centered (align-items, justify-content: center), zIndex: 1000. Renders `<img>` with maxWidth/maxHeight 95vw/95vh and a teal boxShadow (0 0 24px ${C.teal}). Click on the overlay background calls `onClose()`. useEffect hook wires Escape key listener, cleaned up on unmount. Returns null if screenshot not found.
+- **`src/components/SessionWindow.tsx`** (modified) — added import for `Lightbox` component. Changed line 13 from `const [, setLightboxSeq]` to `const [lightboxSeq, setLightboxSeq]` (previously the getter was discarded with `_` pattern). Added conditional render at line 68: `{lightboxSeq !== null && <Lightbox seq={lightboxSeq} onClose={() => setLightboxSeq(null)} />}`. No changes to event handling or other logic.
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 21:10 PDT — v0.3.2 (Task 11: ScreenshotCard + InterleavedView)
 *(Most recent updates at top)*
 
