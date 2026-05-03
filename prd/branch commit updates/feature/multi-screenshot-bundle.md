@@ -4,6 +4,25 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 09:54 PDT — v0.4.1
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fix the "app flashes for a second and disappears" bug that landed in v0.4.0. On launch, when all five macOS permissions were already granted (the common case for returning users), the mount-time `useEffect` was calling `setMode("idle") + win.hide()` immediately after rendering the welcome card. The card painted for one frame, then the window vanished — looked like a crash from the user's perspective, but the app was actually running fine in the tray. Removed the auto-hide. The welcome card now stays visible until the user clicks "Get Started" themselves, on every launch.
+
+### Detail of changes made:
+
+- **`src/App.tsx`** — On-mount useEffect: removed the conditional `setMode("idle") + win.hide()` block that fired when all five permissions were granted. Replaced it with a comment documenting why we *don't* auto-hide. The welcome card now stays visible on every launch until explicit user dismissal.
+
+### Potential concerns to address:
+
+- **Returning users will see the welcome card every launch**: this is the v0.3.x behavior the user explicitly asked for ("when it quits & re-opens, I would like to get an 'all set' and instructions"). If anyone later wants the auto-hide back as an opt-in, add a "Don't show on next launch" checkbox on the welcome card.
+- **No persistent app logs yet**: the diagnosis for this bug required `/usr/bin/log show --process visionpipe` while the issue was happening. A `tauri-plugin-log` integration would let us read logs after the fact and would also forward JS `console.log` output (currently invisible in production builds since devtools are disabled). Recommended follow-up.
+
+---
+
+
 ## Progress Update as of 2026-05-03 09:45 PDT — v0.4.0
 *(Most recent updates at top)*
 

@@ -82,18 +82,10 @@ function AppInner() {
       try {
         const status = await invoke<PermissionStatus>("check_permissions");
         setPermissions(status);
-        // If all permissions are already granted on first check, skip the card.
-        if (
-          status.screenRecording &&
-          status.systemEvents &&
-          status.accessibility &&
-          status.microphone &&
-          status.speechRecognition
-        ) {
-          setMode("idle");
-          const win = getCurrentWindow();
-          await win.hide();
-        }
+        // Welcome card stays visible on every launch until the user clicks
+        // "Get Started". The previous "auto-hide if all permissions granted"
+        // logic made the app appear to flash-and-quit because the only
+        // visible UI was hidden one frame after mount.
       } catch (err) {
         console.error("[VisionPipe] check_permissions failed:", err);
       }
@@ -158,8 +150,31 @@ function AppInner() {
   }, []);
 
   // ── Listen for the in-app "Take next screenshot" trigger from SessionWindow ──
+  // Unlike the Rust global-shortcut path (which resizes the window to
+  // fullscreen before firing start-capture), the in-app "+" button fires
+  // this event directly. After the first capture, the session window has
+  // been shrunk to 70%×85% — so we must re-expand to fullscreen here so
+  // the SelectionOverlay covers the whole screen and the user can drag
+  // any region they want, not just within the small post-capture window.
   useEffect(() => {
-    const handler = () => setMode("selecting");
+    const handler = async () => {
+      try {
+        const win = getCurrentWindow();
+        const monitor = await win.currentMonitor();
+        if (monitor) {
+          const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+          await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+          await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
+        }
+        await win.show();
+        await win.setFocus();
+        await win.setAlwaysOnTop(true);
+      } catch (err) {
+        console.warn("[VisionPipe] vp-take-next-screenshot resize failed:", err);
+      }
+      setCaptureMode("region");
+      setMode("selecting");
+    };
     window.addEventListener("vp-take-next-screenshot", handler);
     return () => window.removeEventListener("vp-take-next-screenshot", handler);
   }, []);

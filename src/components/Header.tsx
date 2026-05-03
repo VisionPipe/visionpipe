@@ -31,11 +31,19 @@ export function Header(props: Props) {
   if (!session) return null;
 
   return (
-    <header style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "10px 16px", background: C.deepForest,
-      borderBottom: `1px solid ${C.border}`, color: C.textBright, fontFamily: FONT_BODY,
-    }}>
+    <header
+      data-tauri-drag-region
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        // 80px left padding clears the macOS traffic-light controls (close /
+        // minimize / zoom) that Tauri overlays at top-left when
+        // titleBarStyle is "Overlay". Without this, the brand+session-id
+        // collide with the dots.
+        padding: "10px 16px 10px 80px",
+        minHeight: 32,
+        background: C.deepForest,
+        borderBottom: `1px solid ${C.border}`, color: C.textBright, fontFamily: FONT_BODY,
+      }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ fontWeight: 700, color: C.teal }}>Vision|Pipe</span>
         <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: C.textMuted, cursor: "pointer" }}
