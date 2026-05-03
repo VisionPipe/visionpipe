@@ -1,3 +1,23 @@
+## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 6: markdown renderer)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added a pure TypeScript markdown renderer that converts a `Session` object into a clipboard-ready markdown string — the primary output format consumed by Claude Code in Spec 1. Followed strict TDD: fixture JSON and golden `.expected.md` files written first, test file created next (confirmed 4 failures), then `src/lib/markdown-renderer.ts` implemented to match byte-for-byte. The renderer handles: session header with folder/audio paths and computed duration, per-screenshot sections with inline image references, conditional caption/URL/narration blocks, offline transcription fallback text with audio-offset timestamps, conditional closing narration section, and the VisionPipe footer. Total test suite advances from 14 to 18 tests across 3 files.
+
+### Detail of changes made:
+
+- **`src/lib/__tests__/__fixtures__/session-2-screenshots.json`** (created) — fixture Session with 2 screenshots (Chrome + VSCode), full `CaptureMetadata`, audio offsets, captions, transcript segments, and closing narration.
+- **`src/lib/__tests__/__fixtures__/session-2-screenshots.expected.md`** (created) — golden output fixture defining the exact markdown contract; tested byte-for-byte against renderer output.
+- **`src/lib/__tests__/markdown-renderer.test.ts`** (created) — 4 tests: golden fixture match, offline narration fallback text, empty closing narration omission, and caption-block omission when caption is empty.
+- **`src/lib/markdown-renderer.ts`** (created) — exports `renderMarkdown(session: Session): string`. Helpers: `formatDuration`, `sessionDurationSec`, `friendlyTs` (ISO → `YYYY-MM-DD HH:MM:SS`), `renderContext`, `renderNarration` (offline fallback branch), `renderScreenshot`. No external dependencies.
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 5: session reducer + Context)
 *(Most recent updates at top)*
 
