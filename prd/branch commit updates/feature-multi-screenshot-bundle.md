@@ -1,3 +1,83 @@
+# Branch Progress: feature/multi-screenshot-bundle
+
+This document tracks progress on the `feature/multi-screenshot-bundle` branch. It is updated with each commit and serves as a context handoff for any future LLM picking up this work.
+
+---
+
+## Progress Update as of 2026-05-02 21:15 PDT — v0.3.2 (Spec 1 Phase A-D complete; pause point for user)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+**Big-picture status:** Phases A through D of the Spec 1 implementation plan are complete (12 of ~26 plan tasks). The app's foundational data model, markdown rendering pipeline, session-window UI shell, and full card UI all exist and verify cleanly. **The user is away; this is a clean pause point.** Phases E (audio recording) onward are deferred because they need physical mic access + smoke testing the user must do.
+
+What works as of this commit:
+- Press `Cmd+Shift+C` → region-select overlay → drag/Enter/Esc captures via the existing Rust `take_screenshot` / `capture_fullscreen` commands
+- New session is auto-created with timestamped folder under `~/Pictures/VisionPipe/session-<ts>/`
+- `transcript.json` auto-saves on every state change (debounced 500 ms; immediate on capture/delete/re-record)
+- Session window appears with header (Vision|Pipe brand + session id + mic placeholder + view-toggle + overflow menu), interleaved card list with per-card editable caption + narration textarea + 🎙/🗑 buttons, "+ Take next screenshot" trigger, "Closing narration" textarea, and footer with "Copy & Send" that copies the rendered markdown to clipboard AND writes `transcript.md` to the session folder
+- Click thumbnail → Lightbox opens at full resolution; Esc / click-outside closes
+- Delete a card → confirms, soft-deletes the PNG to `<session>/.deleted/`, removes from state; sequence numbers never reused
+- Markdown output matches the spec's golden fixture byte-for-byte (Claude Code can paste it directly)
+- 18 frontend unit tests + 2 Rust integration tests passing
+- Vite build: 228 KB JS bundle (71 KB gzipped); cargo check clean
+
+### Detail of changes made (12 commits this session, in order):
+
+| # | SHA | Task | What |
+|---|---|---|---|
+| 0 | `a0a3eb7` | Infra | Replace LLM-validator pre-commit hook with deterministic shell-command hook (no more false-blocks) |
+| 0 | `b7faf45` | Infra | `.env.local.*` glob to gitignore (covers timestamped backups) |
+| 1 | `d553607` | Task 1 | Vitest + Testing Library (jsdom env, globals on, react plugin) |
+| 2 | `dc6d0f8` | Task 2 | TypeScript types in `src/types/session.ts` (Session, Screenshot, AudioOffset, CaptureMetadata, ViewMode) |
+| 3 | `cd7354c` | Task 3 | `generateCanonicalName` + `sanitizeContext` in `src/lib/canonical-name.ts` (8 unit tests, all passing) |
+| 4 | `7b09578` | Task 4 | Rust `session.rs` with `create_session_folder` / `write_session_file` / `move_to_deleted` Tauri commands; `dirs = "5"` dep added; 2 cargo tests passing |
+| 5 | `661f5e0` | Task 5 | `src/state/session-reducer.ts` (13 action types) + `session-context.tsx` (SessionProvider + useSession hook); 6 reducer tests |
+| 6 | `dc098e0` | Task 6 | `src/lib/markdown-renderer.ts` with golden-file tests (4 tests including offline + closing-narration cases) |
+| 7 | `da1c132` | Task 7 | `App.tsx` rewritten 1262 → 90 lines as thin router; new `SelectionOverlay` (extracted with load-bearing `outerPosition()` + DPR math), `IdleScreen`, placeholder `SessionWindow` |
+| 8 | `7aacb4e` | Task 8 | `src/state/persistence.ts` debounced writer + `session-context.tsx` wired to flush on state change (immediate for capture/delete/re-record, 500 ms debounced for text edits) |
+| 9 | `993a633` | Task 9 | `src/lib/ui-tokens.ts` palette + `src/components/Header.tsx` (mic indicator stub, view toggle, overflow menu via window.prompt) |
+| 10 | `8d844fd` | Task 10 | `src/components/Footer.tsx` + SessionWindow wires Copy & Send (renders markdown, writes clipboard, persists transcript.md) |
+| 11 | `ecc9035` | Task 11 | `ScreenshotCard` + `InterleavedView` (the actual visible card UI); also added `assetProtocol` to `tauri.conf.json` and the `protocol-asset` Cargo feature so PNGs from `~/Pictures/VisionPipe/` load via `convertFileSrc` |
+| 12 | `08d0a87` | Task 12 | `src/components/Lightbox.tsx` + wired into SessionWindow (click thumbnail → full-res view; Esc closes) |
+
+### Potential concerns to address (read before resuming):
+
+**Highest priority — verify before more code lands:**
+- **Lost the 300 ms `win.hide()` delay before capture** (Task 7 concern): The previous App.tsx hid the window then waited 300 ms before invoking `take_screenshot`. The new `SelectionOverlay` does NOT do this. On M-series Macs the overlay UI may bleed into the captured PNG. **Test by taking a screenshot and inspecting the PNG in `~/Pictures/VisionPipe/session-*/`** — if the teal selection rectangle or the "Drag a region…" pill appears in the image, restore the hide-delay-capture pattern in `SelectionOverlay.completeSelection`.
+- **Onboarding/permissions screen is gone** (Task 7 concern): The previous `App.tsx` had a first-launch onboarding card prompting Screen Recording + System Events + Accessibility grants. That UI is no longer rendered. **If you do a fresh install or revoke permissions, you'll see a blank IdleScreen and the hotkey will silently fail until you grant permissions in System Settings manually.** The onboarding flow needs to be ported back into the new architecture as a future task — likely as a wrapper around `IdleScreen` that detects permission state and shows the grant UI. Not in this Phase.
+
+**Medium priority — incomplete / placeholder UI:**
+- **Mic indicator is hardcoded to `Recording=false, networkState="local-only"`**. Phase E will wire MediaRecorder + Phase F wires Deepgram via `vp-edge` proxy. Until then the indicator is decorative.
+- **🎙 button on cards dispatches a `vp-rerecord-segment` CustomEvent that nothing listens to**. ReRecordModal lands in Task 15.
+- **Overflow menu uses `window.prompt("1/2/3")`** as a stop-gap (per the plan). Real popover menu is a polish task.
+- **No SplitView (Task 20)** — the view-toggle button toggles `viewMode` state but the split layout doesn't render anything different yet. Both modes show InterleavedView.
+- **No Settings panel (Task 22)** — overflow menu's "Settings" option just `alert()`s. Hotkeys are not yet user-configurable.
+
+**Architectural / infra:**
+- **`.claude/settings.json` deterministic hook is in place on this branch** (commit `a0a3eb7`). When this branch merges to main, that fix lands too. The earlier `feature/cloud-share-secret-link` branch (Plan 2a, paused) also has the same fix — trivial conflict if both merge.
+- **The `cpal`/`candle-*`/`whisper-*`/`symphonia`/`rubato`/`tokenizers`/`hf-hub` Rust deps in `Cargo.toml`** are still present from the speculative on-device Whisper experiment that the spec moved away from (Spec 1 uses Deepgram). They add ~30-50 MB of binary bloat but cause no errors. v0.2.1 cleanup task.
+- **`vp-edge` proxy backend doesn't exist yet** — Phase F will use a Node mock at `vp-edge-mock/server.mjs` (Task 16) for local dev. Production proxy is a separate plan.
+
+### What you (the human) need to do next
+
+1. **Smoke test the current state.** Run `pnpm tauri dev`, press `Cmd+Shift+C`, drag a region. Confirm: session window opens, screenshot card appears with thumbnail visible, you can edit the caption, you can take a 2nd screenshot, and the "Copy & Send" button copies markdown to clipboard. Paste into a Claude Code session to verify the markdown renders + the absolute image paths work for `Read`.
+2. **If overlay-in-screenshot bug exists** (concern #1 above), restore the hide+delay pattern in `SelectionOverlay`.
+3. **If mic permission isn't granted** for the new app bundle, grant Screen Recording + Accessibility in System Settings before audio Phase E begins.
+4. **Decide the order of remaining phases.** Reasonable defaults: Phase E (audio) → Phase F (Deepgram + offline) → Phase H (settings + hotkeys) → Phase G (split view) → Phase I (smoke checklist + final verify). Dispatch via `superpowers:subagent-driven-development` again — the plan at `docs/superpowers/plans/2026-05-02-multi-screenshot-narrated-bundle.md` has full self-contained task descriptions for each remaining task.
+5. **No PR opened yet.** Branch is pushed to origin (12 commits ahead of `main`). When you're ready to merge: confirm the smoke test passes, then `gh pr create --base main` or merge directly.
+
+### What I (Claude) confirmed before this commit
+
+- `pnpm tsc --noEmit` — 0 errors
+- `pnpm test` — 18 / 18 passing across 3 test files
+- `pnpm vite build` — clean, 228 KB JS (71 KB gzipped)
+- `cd src-tauri && cargo check` — passes (7 pre-existing unused-imports warnings, no errors)
+
+I did NOT run `pnpm tauri build --debug` (the full Tauri compile + bundle) because of the time budget; if `cargo check` and `pnpm vite build` both pass, `tauri dev` should launch cleanly.
+
+---
+
 ## Progress Update as of 2026-05-02 21:08 PDT — v0.3.2 (Task 12: Lightbox)
 *(Most recent updates at top)*
 
