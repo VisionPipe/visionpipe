@@ -120,34 +120,8 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
                 All permissions are granted. Here's how to use Vision|Pipe:
               </p>
 
-              <div style={{
-                marginTop: 12, marginBottom: 16, padding: 12, borderRadius: 6,
-                background: C.deepForest, border: `1px solid ${C.amber}`,
-                fontSize: 12, color: C.cream, lineHeight: 1.55,
-              }}>
-                <div style={{ color: C.amber, fontWeight: 700, marginBottom: 6, fontSize: 13 }}>
-                  Heads up — macOS will ask you a couple more times
-                </div>
-                <div style={{ color: C.textMuted, marginBottom: 6 }}>
-                  These show up the first time you capture. Both are normal — click{" "}
-                  <strong style={{ color: C.cream }}>Allow</strong>:
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 18, color: C.textMuted }}>
-                  <li>
-                    <strong style={{ color: C.cream }}>"Bypass the system private window picker"</strong>
-                    {" "}— macOS Sonoma+ adds an extra consent layer for direct screen capture.
-                    This is what lets ⌘⇧C grab a region instantly without opening Apple's picker UI.
-                  </li>
-                  <li>
-                    <strong style={{ color: C.cream }}>"Control [Safari / Chrome / Firefox / etc.]"</strong>
-                    {" "}— only fires when you capture from a browser. It's how Vision|Pipe reads the
-                    active URL to include in metadata. Skipping this just leaves the URL out.
-                  </li>
-                </ul>
-              </div>
-
-              <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 8 }}>How to use:</div>
-              <ul style={{ margin: 0, paddingLeft: 20, color: C.cream, fontSize: 13, lineHeight: 1.8 }}>
+              <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 12, marginTop: 8 }}>How to use:</div>
+              <ul style={{ margin: 0, paddingLeft: 24, color: C.cream, fontSize: 16, lineHeight: 2.2 }}>
                 <li>Press <KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>C</KbdKey> anywhere to start a capture.</li>
                 <li>Drag to select a region, or press <KbdKey>Enter</KbdKey> for a fullscreen capture.</li>
                 <li>Press <KbdKey>Esc</KbdKey> to cancel.</li>
@@ -184,16 +158,19 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
   );
 }
 
-// ── Small inline keyboard-key badge ──
+// ── Inline keyboard-key badge — sized large so the shortcut to capture
+//    (⌘⇧C) is unmistakable as the call-to-action on the welcome card. ──
 function KbdKey({ children }: { children: React.ReactNode }) {
   return (
     <kbd style={{
       display: "inline-block",
-      padding: "1px 6px", margin: "0 2px",
-      fontFamily: FONT_MONO, fontSize: 11,
+      padding: "8px 14px", margin: "0 4px",
+      fontFamily: FONT_MONO, fontSize: 22, fontWeight: 700,
       color: C.cream, background: C.deepForest,
-      border: `1px solid ${C.border}`, borderRadius: 4,
-      verticalAlign: "baseline",
+      border: `2px solid ${C.amber}`, borderRadius: 8,
+      verticalAlign: "middle",
+      minWidth: 28, textAlign: "center",
+      boxShadow: "0 2px 0 rgba(0,0,0,0.3)",
     }}>
       {children}
     </kbd>

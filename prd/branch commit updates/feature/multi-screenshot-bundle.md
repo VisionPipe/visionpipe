@@ -4,6 +4,26 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 08:20 PDT — v0.3.5
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+UI cleanup of the welcome card's "you're all set" view. Removed the "Heads up — macOS will ask you a couple more times" callout box (was getting in the way more than it helped). Made the "How to use" section bigger and the keyboard-shortcut pill buttons (⌘ ⇧ C, Enter, Esc) roughly 5× the original size — bigger font, bigger padding, amber border, drop shadow — so the call-to-action shortcut is the first thing the user sees.
+
+### Detail of changes made:
+
+- **`src/components/Onboarding.tsx`** — Deleted the amber-bordered "Heads up" `<div>` that listed the bypass-window-picker and per-browser Apple Events prompts. Bumped the "How to use:" label from fontSize 12 → 14, and the `<ul>` of usage instructions from fontSize 13 line-height 1.8 → fontSize 16 line-height 2.2 (more breathing room).
+- **`src/components/Onboarding.tsx`** — `KbdKey` component restyled: padding `1px 6px → 8px 14px`, fontSize `11 → 22` (bold), border `1px solid C.border → 2px solid C.amber`, borderRadius `4 → 8`, added `boxShadow: 0 2px 0 rgba(0,0,0,0.3)` for the pressable-key feel, `verticalAlign: middle` so they sit cleanly inline with the surrounding text. Net visual size is roughly 5× the original.
+
+### Potential concerns to address:
+
+- **The welcome card might overflow 680px height** with the larger text + spacing. If the "Got it" button gets pushed below the fold, bump the window size (`showOnboardingWindow` in App.tsx) by another ~80px. Easy follow-up.
+- **No `aria-label` on the kbd elements**: screen readers will read the literal characters. Acceptable for now since the surrounding sentence describes the action.
+
+---
+
+
 ## Progress Update as of 2026-05-03 08:16 PDT — v0.3.4
 *(Most recent updates at top)*
 
