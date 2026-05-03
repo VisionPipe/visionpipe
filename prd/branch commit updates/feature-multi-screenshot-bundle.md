@@ -1,3 +1,23 @@
+## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 4: Rust session folder management)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Implemented Rust session folder management as a new `session` module with four pub functions: `visionpipe_root()` resolves `~/Pictures/VisionPipe/` via the `dirs` crate, `create_session_folder()` creates `session-<id>/` with a `.deleted/` subdirectory, `write_session_file()` writes arbitrary bytes to a named file inside the folder, and `move_to_deleted()` soft-deletes files by renaming them into `.deleted/`. Three new Tauri commands (`create_session_folder`, `write_session_file`, `move_to_deleted`) are wired into the `invoke_handler` in `lib.rs`. Both Rust unit tests pass; `cargo check` is clean (pre-existing warnings only).
+
+### Detail of changes made:
+
+- **`src-tauri/src/session.rs`** (created) — new module with four pub functions and two unit tests verifying folder creation (with `.deleted/` subdirectory) and byte-accurate file writes. Uses `chrono` for test-unique IDs; test cleanup removes created directories.
+- **`src-tauri/src/lib.rs`** — added `mod session;` declaration alongside existing module declarations; added three `#[tauri::command]` async functions (`create_session_folder`, `write_session_file`, `move_to_deleted`) delegating to `session::*`; added all three to the `.invoke_handler()` list.
+- **`src-tauri/Cargo.toml`** — added `dirs = "5"` under `[dependencies]` for cross-platform user-directory resolution.
+- **`src-tauri/Cargo.lock`** — updated by cargo to record the new `dirs` v5 and its transitive dependency `dirs-sys`.
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 20:45 PDT — v0.3.2 (Task 3: canonical name generator)
 *(Most recent updates at top)*
 

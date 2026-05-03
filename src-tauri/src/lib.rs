@@ -9,6 +9,7 @@ mod audio;
 mod capture;
 mod metadata;
 mod permissions;
+mod session;
 mod speech;
 
 #[tauri::command]
@@ -121,6 +122,21 @@ async fn stop_recording() -> Result<String, String> {
         .map_err(|e| format!("Channel error: {}", e))?
 }
 
+#[tauri::command]
+async fn create_session_folder(session_id: String) -> Result<String, String> {
+    session::create_session_folder(&session_id)
+}
+
+#[tauri::command]
+async fn write_session_file(folder: String, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+    session::write_session_file(&folder, &filename, bytes)
+}
+
+#[tauri::command]
+async fn move_to_deleted(folder: String, filename: String) -> Result<(), String> {
+    session::move_to_deleted(&folder, &filename)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -223,6 +239,9 @@ pub fn run() {
             request_speech_recognition,
             start_recording,
             stop_recording,
+            create_session_folder,
+            write_session_file,
+            move_to_deleted,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
