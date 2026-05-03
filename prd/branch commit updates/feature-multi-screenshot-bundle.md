@@ -1,3 +1,24 @@
+## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 7: App.tsx rewrite to session router)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Replaced the monolithic 1,262-line `App.tsx` (single-screenshot composite-image flow with annotation panel, sidebar, credits HUD, onboarding card, and canvas rendering) with a thin 90-line idle/session router built around `SessionProvider`. Extracted the region-select drag logic into `SelectionOverlay.tsx`, preserving the load-bearing `outerPosition()` + `devicePixelRatio` screen-coordinate math. Created placeholder `SessionWindow.tsx` (JSON dump; real UI comes in Tasks 9-12) and `IdleScreen.tsx` (hotkey hint). The new `AppInner` listens for `start-capture` from Rust and `vp-take-next-screenshot` from the session window, calls `create_session_folder` + `write_session_file` + `get_metadata` + `generateCanonicalName` on each capture, dispatches `START_SESSION` and `APPEND_SCREENSHOT` into the session reducer, then shows/focuses the window. TypeScript 0 errors, Vite build 216 KB JS bundle, all 18 tests still pass.
+
+### Detail of changes made:
+
+- **`src/App.tsx`** (full rewrite, 1,262 → 90 lines) — `AppMode` trimmed to `"idle" | "selecting" | "session"`; `AppInner` component inside `SessionProvider`; listens for `start-capture` Tauri event and `vp-take-next-screenshot` DOM event; `onCapture` callback invokes `get_metadata`, `create_session_folder` (first capture only), `write_session_file`, dispatches `START_SESSION` then `APPEND_SCREENSHOT`; `onCancelCapture` returns to session or hides window. Discarded: composite canvas, `measureImageDims`, annotation textarea, credits HUD, voice recording, onboarding flow, `ToolButton`, `ChromeBar`, `Onboarding`, `PermissionRow`, `KbdKey` components.
+- **`src/components/SelectionOverlay.tsx`** (created) — self-contained crosshair overlay; `completeSelection` uses `win.outerPosition()` and `window.devicePixelRatio` (identical math to old App.tsx) to compute screen-absolute coords before calling `take_screenshot`; `captureFullscreen` calls `capture_fullscreen`; both convert data URI → `Uint8Array` and call `onCapture` prop; Escape/Enter key handlers wired.
+- **`src/components/SessionWindow.tsx`** (created) — placeholder; reads `state.session` from `useSession()`, renders session ID, screenshot count, and JSON dump. Returns null if no session.
+- **`src/components/IdleScreen.tsx`** (created) — static centered hint "Press Cmd+Shift+C to start a capture session."
+
+### Potential concerns to address:
+
+- `SelectionOverlay` does NOT call `win.hide()` before capture (the old App.tsx did, with a 300 ms delay to avoid baking the overlay into the screenshot). The new overlay relies on Tauri's transparent window being invisible enough during `screencapture`; if the overlay bleeds into captures on M-series Macs, restore the `win.hide()` + 300 ms delay pattern inside `completeSelection`.
+- The onboarding/permissions flow is entirely gone. If any user hits missing permissions, there's no in-app guidance. This is intentional for this phase — a new onboarding task (post Phase D) should restore it.
+
+---
+
 ## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 6: markdown renderer)
 *(Most recent updates at top)*
 
