@@ -4,6 +4,28 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 08:15 PDT — v0.3.2 (Task 25: Manual smoke-test checklist)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added a documentation-only manual smoke-test checklist at `docs/superpowers/plans/2026-05-02-multi-screenshot-narrated-bundle-smoke-tests.md` that the human user runs on a physical Apple Silicon Mac to verify Spec 1 implementation works end-to-end before merging the branch. The checklist is organized into 11 sections — Prerequisites (dev servers, 5 macOS permissions, `DEEPGRAM_API_KEY`), First-launch onboarding (5 permission rows, deep-link buttons, auto-poll for green checkmarks, plus a documented Speech Recognition deep-link bug on macOS 14+), Happy path (global hotkey → region select → ~70%×85% window → capture card → live Deepgram transcript → multi-screenshot continuation with `audioOffset.end`/`audioOffset.start` continuity → debounced caption auto-save → re-record modal writing `<canonicalName>-rerecord.webm` → Detach/Attach SplitView toggle with localStorage persistence → Copy & Send markdown structure verification → lightbox → all 3 window-scoped hotkeys), Offline path (kill `pnpm dev:proxy` → "Reconnecting…" then "Local-only" indicator → offline placeholder in narration → `audio-master.webm` keeps growing → restart proxy → next capture streams transcripts again), Crash recovery (`pkill -KILL` → re-launch → confirm session folder + partial audio survived → no auto-resume in v0.2), Long session (20 captures, responsiveness, markdown well-formed, Claude Code `Read`-tool resolution), Hotkey rebinding (Settings panel → rebind to `Cmd+Shift+P` → quit/relaunch → conflict warning on `Cmd+Q` → reset-to-defaults), Permission denial (revoke mic → "Paused" indicator → manual narration still works), Window resize (4K cap at 1600×1000, 13" MBA min 800×600, position-persistence between captures), Apple Silicon performance (M1+ latency < 100ms, 5+ min glitch-free audio, 10-min memory stability), and Golden-output verification (4 markdown-renderer tests + manual diff against `session-2-screenshots.expected.md` fixture). The checklist intentionally pre-fills checkbox items (`- [ ]`) so the user can mark each `[x]` as they validate and commit the run results back to the branch if desired. No code, build, or test changes — `pnpm tsc --noEmit` clean and 22/22 vitest still passing (verified before commit on this branch after switching from `main` and stashing two unrelated uncommitted edits — see Concerns).
+
+### Detail of changes made:
+- **`docs/superpowers/plans/2026-05-02-multi-screenshot-narrated-bundle-smoke-tests.md`** (new, ~80 lines): Created the full manual smoke-test checklist with the exact contents specified in the Task 25 prompt — 11 sections covering Prerequisites, Onboarding, Happy path, Offline path, Crash recovery, Long session, Hotkey rebinding, Permission denial, Window resize, Apple Silicon performance, and Golden output verification.
+
+### Verification results:
+- `pnpm tsc --noEmit`: exit 0, no output (markdown isn't TypeScript — confirms no incidental TS regressions on the branch).
+- `pnpm test --run`: 4 test files / 22 tests passing in 452ms — no regressions.
+- File creation confirmed via `Write` tool success message and `ls -la` after branch switch.
+
+### Potential concerns to address:
+- **Working tree was on `main`, not `feature/multi-screenshot-bundle`, when this task started**: The Task 25 prompt asserted the branch was already `feature/multi-screenshot-bundle` with only `prd/initial-build-out.md` modified, but in reality the workspace was on `main` with two uncommitted edits (`src-tauri/tauri.conf.json` adding `titleBarStyle: "Overlay"` + `hiddenTitle: true`; `src/App.tsx` with a 6-line diff of unknown purpose) and an `.env.local.backup-20260502-203403` artifact. Both modifications were stashed before checkout via `git stash push -u -m "task-25-temp: main modifications (tauri.conf.json + App.tsx) before checkout to feature branch"` (stash@{0} on `main` after this commit, assuming I switch back; until the user confirms intent, those changes are NOT lost — they're held in the stash and the user should `git checkout main && git stash pop` to restore them). The original `prd/initial-build-out.md` modification mentioned in the prompt's gitStatus is NOT present on either branch as-of this commit, so the prompt's snapshot was stale relative to the actual on-disk state.
+- **Checklist references behaviors that haven't all shipped on this branch**: A few items reference features that may not yet be wired up — e.g., the `Cmd+Q` reserved-hotkey conflict warning in the Hotkey rebinding section, the "Got it" button finalizing the onboarding card, and the Settings overflow-menu entry point ("overflow menu → 3"). These were copied verbatim from the Task 25 spec and will surface as `[ ]` items the human user can't check off if the corresponding code path isn't there yet — that's the correct outcome for a verification gate, but it means the smoke-test pass rate will inform Phase J (gap-fill) scoping.
+- **No automated check that the checklist itself stays in sync with the code**: The doc lists specific paths (`~/Pictures/VisionPipe/session-*/transcript.json`), specific filenames (`<canonicalName>-rerecord.webm`), and specific golden fixtures (`src/lib/__tests__/__fixtures__/session-2-screenshots.expected.md`). If any of those move, this doc will silently rot. Acceptable for a one-shot pre-merge gate, but worth flagging if the doc is reused for v0.3 verification.
+
+---
+
 ## Progress Update as of 2026-05-03 08:00 PDT — v0.3.2 (Task 24: README transcription disclosure)
 *(Most recent updates at top)*
 
