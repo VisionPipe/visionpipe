@@ -4,6 +4,33 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-03 14:45 PDT — v0.6.1 (Tray click → opens app, not empty menu)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+User reported: "Nothing is happening when I click on the tray at the top — I should see a dropdown with [HistoryHub-style rows]." The native NSMenu IS opening on left-click but it's text-only (NSMenu can't render thumbnails or per-row Copy/Folder buttons), so the dropdown looked useless. Switched left-click behavior: tray icon now brings the main window forward + focused (showing HistoryHub if no session, SessionWindow if mid-session). Right-click still shows the native menu with the full set of static actions. Also added a `refresh_tray` Tauri command that the frontend invokes after END_SESSION so just-ended bundles show in the tray without an app restart.
+
+### Detail of changes made:
+
+- `src-tauri/src/lib.rs`:
+  - Added `tray::{MouseButton, MouseButtonState, TrayIconEvent}` imports.
+  - `TrayIconBuilder.show_menu_on_left_click(true)` → `false`.
+  - New `.on_tray_icon_event(...)` handler: matches `TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up }` → calls `refresh_tray_menu(app)` (so right-click view stays current), then `unminimize() + show() + set_focus()` on the main window.
+  - New `refresh_tray` Tauri command (just delegates to `refresh_tray_menu`).
+  - Wired `refresh_tray` into the invoke_handler list.
+- `src/components/SessionWindow.tsx`: `onNewSession` now calls `void invoke("refresh_tray").catch(...)` after END_SESSION. Best-effort — failure doesn't block the session-end flow.
+
+### Verification:
+- `cargo check` clean (only pre-existing warnings).
+- `pnpm tsc --noEmit` clean.
+- `pnpm test --run` 22/22 passing.
+
+### Why not a custom popover window?
+A true tray-anchored popover (HistoryHub rows visible inline under the tray icon) would require a separate borderless Tauri window positioned via `tray.rect()` coordinates plus dismiss-on-blur logic. Significant new build for a UX delta of "click-tray → window appears anchored to icon" vs "click-tray → main window comes forward." Deferred — can revisit if the user finds the focus-main-window behavior unsatisfying.
+
+---
+
 ## Progress Update as of 2026-05-02 11:55 PDT — v0.6.0 (In-app History hub, tray-menu sessions, ReRecord cpal, dead-code removal)
 *(Most recent updates at top)*
 

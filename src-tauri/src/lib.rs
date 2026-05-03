@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{TrayIcon, TrayIconBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
 
@@ -238,6 +238,15 @@ async fn reveal_in_finder(path: String) -> Result<(), String> {
         .args(["-R", &path])
         .status()
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Refresh the tray menu's recent-sessions list. Called by the frontend
+/// after END_SESSION so a just-ended bundle appears in the tray right-click
+/// menu without an app restart.
+#[tauri::command]
+async fn refresh_tray(app: AppHandle) -> Result<(), String> {
+    refresh_tray_menu(&app);
     Ok(())
 }
 
@@ -740,7 +749,39 @@ pub fn run() {
             let _tray = TrayIconBuilder::with_id("main")
                 .tooltip("VisionPipe")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
+                // v0.6.1: left-click brings the main window forward (showing
+                // HistoryHub if no session active) rather than opening the
+                // native NSMenu. The previous behavior — left-click → text
+                // menu listing recent sessions — felt empty: NSMenu can't
+                // show thumbnails or per-row Copy/Folder buttons, so the
+                // user couldn't actually DO anything from the dropdown
+                // beyond opening the session folder. Right-click still
+                // shows the native menu for the static actions
+                // (Take Capture, Quit, etc.) for power users.
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        // Refresh the menu list so right-click reflects any
+                        // sessions added since startup. Cheap (~ms) since
+                        // it's just a directory walk + metadata stats.
+                        refresh_tray_menu(app);
+                        if let Some(window) = app.get_webview_window("main") {
+                            // Bring forward + focus. The window already
+                            // renders the right view based on session state
+                            // (HistoryHub when no session, SessionWindow
+                            // otherwise) — see App.tsx view routing.
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
                 .on_menu_event(|app, event| {
                     let id = event.id.as_ref();
                     match id {
@@ -928,6 +969,7 @@ pub fn run() {
             list_recent_sessions_cmd,
             reveal_in_finder,
             read_session_file,
+            refresh_tray,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

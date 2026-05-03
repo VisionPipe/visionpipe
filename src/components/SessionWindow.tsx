@@ -124,10 +124,13 @@ export function SessionWindow() {
   // audio-master.webm. With the v0.5.2 cpal switch, audio doesn't get
   // saved as a file at all — only its transcript. clearRecorder drains
   // the in-flight segment's transcript into the appropriate place.
+  // v0.6.1: also tells Rust to refresh the tray menu so the just-ended
+  // bundle shows up in the right-click submenu without an app restart.
   const onNewSession = async () => {
     await mic.clearRecorder();
     mic.closeDeepgram();
     dispatch({ type: "END_SESSION" });
+    void invoke("refresh_tray").catch(() => {/* best-effort */});
   };
 
   return (
