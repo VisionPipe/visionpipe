@@ -4,6 +4,59 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 12:04 PDT — v0.6.0
+*(Most recent updates at top)*
+
+
+## v0.6.0 — History view + cpal cleanup
+
+**New: in-app History hub**
+- When Vision|Pipe is the active app and no session is in progress, the
+  window now shows a "Recent screenshot bundles" view instead of hiding.
+- Each row: 3 thumbnails + label ("Today at 9:42 AM · 3 screenshots") +
+  first caption / transcript snippet. Click a row to expand: full
+  thumbnail grid + transcript snippet + folder path.
+- Per-row actions: **Copy** (writes transcript.md + sets clipboard with
+  dual text + file URL representation, same as in-session Copy & Send) and
+  **Show in Finder** (selects transcript.md if it exists, otherwise opens
+  the session folder — drag from there into Claude Code).
+- "+ New Screenshot Bundle" button in the header triggers the standard
+  capture pipeline (same path as ⌘⇧C).
+- After "End Session" or onboarding dismiss, the user lands on the
+  History view (was previously a hidden window — felt like the app
+  had quit).
+
+**Tray menu now shows recent SESSIONS, not individual PNGs**
+- The tray's "Recent" submenu used to list the last 10 .png files. It now
+  lists the last 10 sessions (bundles) with the same friendly label as
+  the History view. Click opens the session folder in Finder.
+
+**Re-record narration ported to cpal**
+- ReRecordModal previously used the browser's MediaRecorder + saved a
+  separate .webm file per re-record (which the markdown then referenced
+  as "supplemental audio"). With the v0.5.2 cpal switch this approach
+  was stale. It now pauses the master cpal recording (drains its
+  in-flight transcript so nothing is lost), starts a fresh segment,
+  and on Stop replaces the screenshot's transcript text outright.
+
+**Code cleanup: removed dead Deepgram + MediaRecorder paths**
+- Deleted `src/lib/deepgram-client.ts` and `src/lib/audio-recorder.ts`
+  (both were unused after the v0.5.2 on-device switch).
+- Removed the `recorder` field from MicContext (cpal lives in Rust;
+  there's no JS-side handle to expose).
+- SessionWindow's "New Session" handler no longer tries to write a
+  webm blob — it just drains the master mic via `clearRecorder`.
+
+**New Tauri commands**
+- `list_recent_sessions_cmd(limit)` — returns SessionSummary[] for the
+  History view + tray menu.
+- `reveal_in_finder(path)` — `open -R` wrapper used by both surfaces.
+- `read_session_file(folder, filename)` — needed so Copy from history
+  can re-render markdown for sessions that never had Copy & Send run.
+
+---
+
+
 ## Progress Update as of 2026-05-03 11:22 PDT — v0.5.1
 *(Most recent updates at top)*
 
