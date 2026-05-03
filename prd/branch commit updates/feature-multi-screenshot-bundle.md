@@ -1,3 +1,22 @@
+## Progress Update as of 2026-05-02 21:02 PDT — v0.3.2 (Task 10: Footer bar + Copy & Send)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Implemented the Footer component with "Take next screenshot" button and "Copy & Send" primary action as the bottom chrome of the SessionWindow. Created `src/components/Footer.tsx` with a flexbox footer layout (transparent left button, teal right button) and wired it into SessionWindow.tsx with two event handlers: `onTakeNextScreenshot` dispatches a CustomEvent to trigger capture mode, and `onCopyAndSend` renders the session to markdown via the existing `renderMarkdown()` utility, writes the markdown to clipboard via `@tauri-apps/plugin-clipboard-manager`, and persists the markdown to `{sessionFolder}/transcript.md` via the Tauri `write_session_file` command. App.tsx already had the `vp-take-next-screenshot` event listener from Task 7, so no modification was needed. The Footer footer receives a tooltip showing the screenshot count + transcript. TypeScript compilation 0 errors; all 18 tests still pass (no new tests for Footer — component is visual scaffolding); Vite build succeeds (223.55 KB JS bundle).
+
+### Detail of changes made:
+
+- **`src/components/Footer.tsx`** (created) — exports `Footer` component with `Props` interface: `onTakeNextScreenshot` (function), `onCopyAndSend` (async function), `copyTooltip` (string), and `busy` (boolean). Layout is flexbox row (justify-between) on deepForest background with top border. Left button (transparent, borderLight border) shows "＋ Take next screenshot" with disabled cursor when busy. Right button (teal background, bold) shows "📋 Copy & Send" with HTML entity for ampersand, disabled when busy, with title tooltip.
+- **`src/components/SessionWindow.tsx`** (modified) — added imports for `Footer`, `renderMarkdown`, `writeText` from `@tauri-apps/plugin-clipboard-manager`, and `invoke` from `@tauri-apps/api/core`. Added `onCopyAndSend` async handler that calls `renderMarkdown(session)`, writes to clipboard via `writeText()`, encodes to bytes, and invokes `write_session_file` to persist as `transcript.md`. Added `takeNext` handler that dispatches the `vp-take-next-screenshot` CustomEvent. Changed layout from 2-section to 3-section (header, main with scrollable content, footer). Header `onOpenSessionFolder` now uses the `session` const instead of `state.session?.folder`. Pre-existing JSON dump moved into `<main>` element for proper flex layout. Footer mounted with both handlers, computed tooltip.
+- **`src/App.tsx`** — verified the `vp-take-next-screenshot` event listener exists at lines 28-32; no modifications needed.
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 9: Header bar)
 *(Most recent updates at top)*
 
