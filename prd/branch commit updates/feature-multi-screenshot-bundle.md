@@ -4,6 +4,29 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 20:45 PDT — v0.3.2 (Task 2: TypeScript session types)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Created the core TypeScript data model for multi-screenshot sessions: `src/types/session.ts` exports four types that define the session structure, capture metadata, audio offsets, and screenshots. The types align with the specification in docs/superpowers/specs/2026-05-02-multi-screenshot-narrated-bundle-design.md and serve as the foundation for all session-related frontend state management and API contracts in Spec 1.
+
+### Detail of changes made:
+
+- **`src/types/session.ts`** (created) — new file in new directory `src/types/`. Exports five TypeScript types:
+  - `CaptureMetadata` (interface): 24 properties capturing environment + window + system state at capture time (app, os, cpu, memory, display info, timezone, locale, dark mode, battery, uptime, etc.)
+  - `AudioOffset` (interface): two properties (start and end timestamps in seconds) positioning each screenshot segment within audio-master.webm
+  - `Screenshot` (interface): core data type with 8 properties (seq, canonicalName, capturedAt, audioOffset, caption, transcriptSegment, reRecordedAudio, metadata, offline)
+  - `ViewMode` (type alias): union of "interleaved" | "split" for the UI view toggle
+  - `Session` (interface): 8 properties (id, folder, createdAt, updatedAt, audioFile, viewMode, screenshots[], closingNarration)
+- **Verified TypeScript compilation**: `pnpm tsc --noEmit` exits 0 with no errors (pre-existing errors in App.tsx are out of scope for Task 2).
+
+### Potential concerns to address:
+
+- **None.** Types are pure data structures with no logic or side effects. No external dependencies added. Ready for use by state management + API layers in subsequent tasks.
+
+---
+
 ## Progress Update as of 2026-05-02 20:38 PDT — v0.3.2 (Task 1: Vitest setup)
 *(Most recent updates at top)*
 
