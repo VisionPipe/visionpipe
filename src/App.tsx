@@ -1081,7 +1081,15 @@ function Onboarding({ permissions, onRecheck, onDismiss }: {
                 <li>Paste into ChatGPT, Claude, Gemini, or any LLM that accepts images + text.</li>
               </ul>
 
-              <div style={{ marginTop: 20, fontSize: 12, color: C.textDim }}>
+              <div style={{
+                marginTop: 16, padding: 10, borderRadius: 6,
+                background: C.deepForest, border: `1px solid ${C.border}`,
+                fontSize: 12, color: C.textMuted, lineHeight: 1.5,
+              }}>
+                <strong style={{ color: C.amber }}>Heads up:</strong> the first time you capture, macOS will ask Vision|Pipe to "bypass the system private window picker." Click <strong style={{ color: C.cream }}>Allow</strong> — this is what lets ⌘⇧C grab a region instantly instead of opening Apple's picker UI every time.
+              </div>
+
+              <div style={{ marginTop: 16, fontSize: 12, color: C.textDim }}>
                 Re-open this welcome from the menu bar tray icon → <em>Show Onboarding…</em>
               </div>
 
