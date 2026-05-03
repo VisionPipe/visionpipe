@@ -262,6 +262,21 @@ ok "Copied to web project"
 
 step "Prepending entry to ${PROGRESS_LOG#$PROJECT_ROOT/}"
 
+# If the log file doesn't exist for this branch yet, create it with the
+# standard header. The awk insertion below requires a `---` separator to
+# anchor onto, which the header provides.
+if [ ! -f "$PROGRESS_LOG" ]; then
+  mkdir -p "$(dirname "$PROGRESS_LOG")"
+  cat > "$PROGRESS_LOG" <<EOF
+# Branch Progress: ${CURRENT_BRANCH}
+
+This document tracks progress on the \`${CURRENT_BRANCH}\` branch of VisionPipe. It is updated with each commit and serves as a context handoff for any future LLM picking up this work.
+
+---
+
+EOF
+fi
+
 TIMESTAMP=$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M %Z')
 
 if [ -f "$NOTES_FILE" ]; then

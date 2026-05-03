@@ -4,6 +4,23 @@ This document tracks progress on the `merge-best-of-both` branch, which exists t
 
 ---
 
+## Progress Update as of 2026-05-02 19:00 PDT — release script fresh-branch fix
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fix for the issue uncovered during the v0.3.0 release: the script's "prepend to progress log" step assumed `prd/branch commit updates/<branch>.md` already existed. On a fresh branch (like this one was), it didn't, and the script bailed out mid-release. Now the script auto-creates the file with a standard `# Branch Progress: <branch>` header before the awk-insert step. Future first-time releases on new branches will Just Work without manual intervention.
+
+### Detail of changes made:
+
+- **`scripts/release.sh`** — added a check at the start of the prepend step: if the log file doesn't exist, write a header (`# Branch Progress: ...`, intro paragraph, `---`) into it. The existing awk insertion then works on this fresh file the same way it does on existing ones.
+
+### Potential concerns to address:
+
+- **No CI smoke test for the release script itself**: this bug only surfaced when the actual conditions matched (fresh branch + first build). A unit test that runs the relevant steps against a temp directory would have caught it earlier. Worth adding when we touch the script next.
+
+---
+
 ## Progress Update as of 2026-05-02 18:50 PDT — v0.3.0
 *(Most recent updates at top)*
 
