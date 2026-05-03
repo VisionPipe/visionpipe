@@ -352,6 +352,11 @@ function App() {
   const handleSubmit = useCallback(async () => {
     if (!metadata) return;
 
+    // Show "Copied" overlay IMMEDIATELY so the user sees feedback before
+    // the canvas + clipboard work runs. The auto-close timer fires after
+    // 1500ms regardless of how long the actual copy takes.
+    setJustCopied(true);
+
     // Build the composite image: screenshot + annotation + metadata in one PNG
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d")!;
@@ -565,8 +570,7 @@ function App() {
 
     setSessionCredits((c) => c + captureCredits);
 
-    // Show "Copied!" confirmation, then auto-close after 1.5s
-    setJustCopied(true);
+    // Auto-close after 1.5s. justCopied was set true at the top of handleSubmit.
     setTimeout(() => {
       setJustCopied(false);
       resetAndHide();
@@ -695,8 +699,7 @@ function App() {
     }}>
       <div style={{
         display: "flex", flexDirection: "column", flex: 1, borderRadius: 14, overflow: "hidden",
-        border: `1px solid ${C.border}`,
-        boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(46, 139, 122, 0.1)",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
       }}>
         <ChromeBar />
         <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
@@ -908,8 +911,6 @@ function App() {
             onMouseLeave={(e) => e.currentTarget.style.background = C.teal}
           >
             <span>Copy to Clipboard</span>
-            <span style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 11, opacity: 0.7 }}>|</span>
-            <span style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 11, opacity: 0.7 }}>pbcopy</span>
           </button>
 
           {/* Keyboard Hint */}

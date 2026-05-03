@@ -9,3 +9,4 @@ src-tauri/target/
 .superpowers/
 .claude/settings.local.json
 scripts/.release-notes.md
+.homebrew-visionpipe/

@@ -324,6 +324,67 @@ git push
 
 ok "Pushed visionpipe"
 
+# --- step 9.5: GitHub release with DMG attached ----------------------------
+
+step "Creating GitHub release v${VERSION} on VisionPipe/visionpipe"
+
+# Notes for the GitHub release: same body as the prd entry (frontmatter stripped)
+GH_NOTES_FILE=$(mktemp)
+if [ -f "$NOTES_FILE" ]; then
+  awk '/^---$/ { c++; next } c >= 2' "$NOTES_FILE" > "$GH_NOTES_FILE"
+else
+  echo "Routine release v${VERSION}." > "$GH_NOTES_FILE"
+fi
+
+if gh release view "v${VERSION}" --repo VisionPipe/visionpipe >/dev/null 2>&1; then
+  echo "  Release v${VERSION} already exists — uploading DMG only"
+  gh release upload "v${VERSION}" "$DMG_PATH" --repo VisionPipe/visionpipe --clobber
+else
+  gh release create "v${VERSION}" "$DMG_PATH" \
+    --title "v${VERSION}" \
+    --notes-file "$GH_NOTES_FILE" \
+    --repo VisionPipe/visionpipe
+fi
+
+rm -f "$GH_NOTES_FILE"
+ok "GitHub release v${VERSION} published"
+
+# --- step 9.6: update homebrew-visionpipe tap ------------------------------
+
+step "Updating homebrew tap to v${VERSION}"
+
+TAP_DIR="$PROJECT_ROOT/.homebrew-visionpipe"
+DMG_SHA256=$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')
+
+if [ ! -d "$TAP_DIR" ]; then
+  git clone https://github.com/VisionPipe/homebrew-visionpipe.git "$TAP_DIR"
+else
+  git -C "$TAP_DIR" fetch origin
+  git -C "$TAP_DIR" reset --hard origin/main
+fi
+
+CASK_FILE="$TAP_DIR/Casks/visionpipe.rb"
+[ -f "$CASK_FILE" ] || fail "Cask file not found at $CASK_FILE"
+
+sed -i.bak "s/^  version \".*\"/  version \"${VERSION}\"/" "$CASK_FILE"
+sed -i.bak "s/^  sha256 \".*\"/  sha256 \"${DMG_SHA256}\"/" "$CASK_FILE"
+# Bundle ID was renamed in v0.1.x → 0.2.x. Update zap paths to match.
+sed -i.bak "s|ai\\.visionpipe\\.app|com.visionpipe.desktop|g" "$CASK_FILE"
+rm -f "$CASK_FILE.bak"
+
+# Verify changes
+grep -q "version \"${VERSION}\"" "$CASK_FILE" || fail "Cask version not updated"
+grep -q "sha256 \"${DMG_SHA256}\"" "$CASK_FILE" || fail "Cask sha256 not updated"
+
+git -C "$TAP_DIR" add Casks/visionpipe.rb
+if git -C "$TAP_DIR" diff --cached --quiet; then
+  echo "  Tap already up to date"
+else
+  git -C "$TAP_DIR" commit -m "Bump visionpipe to v${VERSION}"
+  git -C "$TAP_DIR" push origin main
+  ok "Homebrew tap pushed"
+fi
+
 # --- step 10: commit + push visionpipe-web ----------------------------------
 
 step "Committing release v${VERSION} in visionpipe-web"
