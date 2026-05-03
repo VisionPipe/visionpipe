@@ -285,8 +285,12 @@ ${COMMIT_LIST:-- No recent commits to summarize.}
 - Auto-generated entry; a human-written summary would be more useful for future LLM context."
 fi
 
-# Build the new entry block
-NEW_ENTRY=$(cat <<EOF
+# Write the new entry block to a temp file. Going via a file (vs. passing
+# a multi-line string to `awk -v`) is more reliable — `awk -v` doesn't
+# handle embedded newlines consistently across awk implementations, which
+# silently produced empty entries in v0.2.0–v0.2.5.
+PREPEND_FILE=$(mktemp)
+cat > "$PREPEND_FILE" <<EOF
 ## Progress Update as of $TIMESTAMP — v${VERSION}
 *(Most recent updates at top)*
 
@@ -295,21 +299,27 @@ $ENTRY_BODY
 ---
 
 EOF
-)
 
-# Insert the new entry after the first '---' separator (which sits below
-# the file's intro paragraph and above the first existing entry).
+# Insert the prepend file's contents after the first '---' separator (which
+# sits below the file's intro paragraph and above the first existing entry).
 TMP=$(mktemp)
-awk -v entry="$NEW_ENTRY" '
+awk -v prepend="$PREPEND_FILE" '
   /^---$/ && !inserted {
     print
     print ""
-    print entry
+    while ((getline line < prepend) > 0) print line
+    close(prepend)
     inserted = 1
     next
   }
   { print }
 ' "$PROGRESS_LOG" > "$TMP" && mv "$TMP" "$PROGRESS_LOG"
+rm -f "$PREPEND_FILE"
+
+# Verify the entry actually landed in the file
+if ! grep -q "v${VERSION}" "$PROGRESS_LOG"; then
+  fail "Log entry for v${VERSION} was not inserted into $PROGRESS_LOG"
+fi
 
 ok "Log entry prepended"
 

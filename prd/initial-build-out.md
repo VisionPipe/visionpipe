@@ -4,6 +4,31 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 18:06 PDT — v0.2.6
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fixed a silent bug in `scripts/release.sh`: the progress-log prepend step was using `awk -v entry="$multiline_string"` to inject the new entry, but `awk -v` doesn't reliably handle multi-line variable values across awk implementations. The result was that v0.2.0 through v0.2.5 all shipped without their progress-log entries actually being written to `prd/initial-build-out.md` — the script appeared to succeed but the file was unchanged. Switched to writing the entry to a temp file and reading it line-by-line via `getline` inside awk, which is robust. Added a `grep` verification step at the end of the prepend so a future failure becomes a hard error instead of a silent skip.
+
+### Detail of changes made:
+
+- **`scripts/release.sh`** — `step 8 "Prepending entry to prd/initial-build-out.md"` now writes the new entry to a tempfile and uses `awk -v prepend=PATH` + `getline line < prepend` to read it line-by-line. Added a post-prepend `grep -q "v${VERSION}"` verification that hard-fails if the entry didn't actually land in the file.
+
+### Missing entries — context for future agents
+
+The progress-log entries for **v0.2.0, v0.2.1, v0.2.2, v0.2.3, v0.2.4, v0.2.5** were lost to this bug. Their `.release-notes.md` source files were already deleted by the cleanup step, so reconstructing them from memory would be lossy. **For details on those releases, see `git log --oneline` and `git show v0.2.X`** — the commit messages and diffs are intact, just the log entries were never written.
+
+What landed across those six releases (high level): the first-launch onboarding flow with three permissions (Screen Recording, System Events, Accessibility), the draggable chrome bar, the system tray menu, the brand rendered as `Vision|Pipe` everywhere, the `Give your LLM eyes.` tagline, the Carbon-FFI-then-osascript permission detection, the Info.plist usage descriptions, the "Heads up" callout for first-capture system prompts, the dynamic version stamp via `getVersion()`, the "Copied to clipboard" overlay, removal of the dark backdrop / box, removal of the `pbcopy` jargon, and the GitHub-release + homebrew-tap automation in the release script (so `brew install --cask visionpipe` and the website's Download button now ship the same version).
+
+### Potential concerns to address:
+
+- **The verification `grep -q "v${VERSION}"`** assumes the version string is unique to this release. If we ever bumped to a version that already appeared in the file (e.g., a downgrade), the grep would falsely succeed. Acceptable for monotonic release bumps.
+- **No structured tests for the release script**: each step is verified inline (sha256, jq, grep), but there's no end-to-end test of the whole pipeline. A regression here would surface only on the next release. Worth a tiny smoke test that runs the prepend step against a fixture file and verifies the output.
+
+---
+
+
 ## Progress Update as of 2026-05-02 17:30 PDT
 *(Most recent updates at top)*
 
