@@ -1,3 +1,26 @@
+## Progress Update as of 2026-05-02 21:10 PDT — v0.3.2 (Task 11: ScreenshotCard + InterleavedView)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Replaced the JSON-dump placeholder in SessionWindow with a real card-based UI. Created `ScreenshotCard.tsx` — an `<article>` component that shows a 160×120 thumbnail (loaded via the Tauri asset protocol), an editable caption (inline single-click editing with Enter/blur-to-save), a transcript narration textarea, and re-record/delete icon buttons with placeholder event-dispatch handlers. Created `InterleavedView.tsx` that maps all session screenshots to `ScreenshotCard` components (last card flagged `isActive`), appends a dashed "Take next screenshot" call-to-action button, and renders a closing narration textarea below. Rewrote `SessionWindow.tsx` to route through `InterleavedView`, adding `requestDelete` (confirmation dialog + `move_to_deleted` Tauri invoke + `DELETE_SCREENSHOT` dispatch) and `requestRerecord` (fires `vp-rerecord-segment` CustomEvent; real modal in Task 15). To enable `convertFileSrc` to load PNGs from the `~/Pictures/VisionPipe/` folder, added `assetProtocol` scope to `src-tauri/tauri.conf.json` and added the `protocol-asset` feature to `src-tauri/Cargo.toml`. TypeScript: 0 errors; all 18 tests pass; Vite build: 227.50 KB JS bundle; `cargo check`: clean (only pre-existing warnings).
+
+### Detail of changes made:
+
+- **`src/components/ScreenshotCard.tsx`** (created) — `Props`: `screenshot`, `isActive`, `onOpenLightbox`, `onRequestRerecord`, `onRequestDelete`. Uses `convertFileSrc` from `@tauri-apps/api/core` to build the asset URL from `session.folder + canonicalName + .png`. Caption area toggles between a styled `<div>` (click to edit, shows amber caption or dimmed italic placeholder) and an `<input>` (autoFocus, Enter/blur saves via `UPDATE_CAPTION` dispatch). Transcript is a `<textarea>` with live `UPDATE_TRANSCRIPT_SEGMENT` dispatch. Re-record (🎙) and delete (🗑) buttons are transparent icon buttons with 28×28 sizing. Active card gets teal border; inactive gets standard `C.border`.
+- **`src/components/InterleavedView.tsx`** (created) — maps `session.screenshots` to `ScreenshotCard` (last index = `isActive`). Below cards: dashed "＋ Take next screenshot" button; "CLOSING NARRATION" labeled textarea dispatching `UPDATE_CLOSING_NARRATION`.
+- **`src/components/SessionWindow.tsx`** (rewritten) — added `useState<number | null>` for future lightbox seq (no UI yet; Task 12). `requestDelete` finds the target screenshot, shows a `confirm()` dialog, invokes `move_to_deleted`, then dispatches `DELETE_SCREENSHOT`. `requestRerecord` fires `vp-rerecord-segment` CustomEvent (real modal in Task 15). `<main>` now mounts `InterleavedView` instead of the JSON dump pre-tag; removed `padding: 16` from `<main>` (InterleavedView owns its own padding).
+- **`src-tauri/tauri.conf.json`** (modified) — added `"assetProtocol": { "enable": true, "scope": ["$PICTURE/VisionPipe/**"] }` alongside the existing `"csp": null` inside `app.security`. No other fields changed.
+- **`src-tauri/Cargo.toml`** (modified) — added `"protocol-asset"` to the tauri dependency features list (required by Cargo build script when `assetProtocol` is enabled in tauri.conf.json; build script errors without it).
+
+### Potential concerns to address:
+
+- The `protocol-asset` Cargo feature downloads one new crate (`http-range v0.1.5`) and slightly increases the binary. This is the expected trade-off for native asset serving.
+- The Lightbox click handler (`onOpenLightbox`) stores the seq in state but renders nothing — Task 12 will add the actual modal.
+- The re-record button fires a DOM event; Task 15 adds the ReRecordModal that listens for it.
+
+---
+
 ## Progress Update as of 2026-05-02 21:02 PDT — v0.3.2 (Task 10: Footer bar + Copy & Send)
 *(Most recent updates at top)*
 

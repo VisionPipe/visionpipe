@@ -15,7 +15,7 @@ cc = "1"
 
 [dependencies]
 visionpipe-core = { path = "../crates/visionpipe-core" }
-tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png", "protocol-asset"] }
 embed_plist = "1"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
