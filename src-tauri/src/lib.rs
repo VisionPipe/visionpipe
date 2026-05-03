@@ -1,4 +1,5 @@
 use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Emitter,
     Manager,
@@ -6,6 +7,7 @@ use tauri::{
 
 mod capture;
 mod metadata;
+mod permissions;
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
@@ -96,10 +98,31 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // Create system tray
+            // System tray with menu (Show Onboarding, Quit)
+            let show_onboarding = MenuItem::with_id(
+                app,
+                "show_onboarding",
+                "Show Onboarding…",
+                true,
+                None::<&str>,
+            )?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit = PredefinedMenuItem::quit(app, Some("Quit VisionPipe"))?;
+            let menu = Menu::with_items(app, &[&show_onboarding, &separator, &quit])?;
+
             let _tray = TrayIconBuilder::new()
                 .tooltip("VisionPipe")
-                .on_tray_icon_event(|_tray, _event| {})
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .on_menu_event(|app, event| {
+                    if event.id.as_ref() == "show_onboarding" {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.emit("show-onboarding", ());
+                        }
+                    }
+                })
                 .build(app)?;
 
             // Ensure window is hidden on startup
@@ -112,8 +135,23 @@ pub fn run() {
                 // window.open_devtools();
             }
 
-            // Register global shortcut
+            // Register global shortcuts
             use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+            // Cmd+Shift+O — re-open the onboarding window (debug/manual access)
+            let onboarding_handle = app.handle().clone();
+            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+O", move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    eprintln!("[VisionPipe] Show-onboarding shortcut triggered");
+                    if let Some(window) = onboarding_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.emit("show-onboarding", ());
+                    }
+                }
+            })?;
+
+            // Cmd+Shift+C — start capture
             let app_handle = app.handle().clone();
             app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+C", move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
@@ -147,7 +185,14 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, get_metadata, save_and_copy_image])
+        .invoke_handler(tauri::generate_handler![
+            take_screenshot,
+            capture_fullscreen,
+            get_metadata,
+            save_and_copy_image,
+            permissions::check_permissions,
+            permissions::open_settings_pane,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -14,12 +14,44 @@ For **every commit** on a development branch in this project, the corresponding 
 4. **Stage the log file alongside your code changes** so the commit includes both. Do not split the doc update into a separate commit — code and log update belong in the same commit.
 5. **After committing, tell the user explicitly: "I committed and updated `prd/<branch-name>.md`."** This is non-negotiable — the user needs the confirmation to know the log is current.
 
+### Version bump on every build
+
+**Every release build bumps the version.** This is non-negotiable — `./scripts/release.sh` does it automatically. The minimum bump is **patch** (`+0.0.1`), even for a single-character fix. There is no such thing as "rebuild without bumping."
+
+Choose the bump size based on the magnitude of the change. The script defaults to **patch**; specify `--bump minor` or `--bump major` to override (or set it in the frontmatter of `scripts/.release-notes.md`).
+
+**Patch (`+0.0.1` — e.g. `0.1.0 → 0.1.1`)** — the default. Use for:
+- Bug fixes
+- Copy / wording tweaks
+- Style adjustments (color, spacing, font size)
+- Small UI nudges (a single layout tweak)
+- Tweaks to log messages, comments, or internal naming
+- Re-bundling without code changes (e.g. retrying a build that failed)
+
+**Minor (`+0.1.0` — e.g. `0.1.5 → 0.2.0`)** — meaningful additions or behavior changes. Use for:
+- New features (a new screen, a new keyboard shortcut, a new CLI flag)
+- A new UI flow or user-facing component
+- Refactors that change observable behavior
+- Adding a new dependency or system integration
+- Changes that warrant a paragraph in the release notes
+
+**Major (`+1.0.0` — e.g. `0.9.0 → 1.0.0`)** — breaking or milestone. Use for:
+- The first production-stable release
+- Removing or renaming a public API
+- A fundamental rewrite or architecture change
+- Bundle-identifier changes
+- Any release a user would describe as "the new version"
+
+The script keeps the version in sync across **three files**: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`. Don't edit them by hand.
+
+The new version is written into the progress log entry's heading — e.g. `## Progress Update as of 2026-05-02 17:30 PDT — v0.1.1`. This makes the version-to-commit mapping trivially findable.
+
 ### Entry format
 
 Use this exact format. Newest entries go at the top of the file.
 
 ```
-## Progress Update as of [YYYY-MM-DD HH:MM Pacific]
+## Progress Update as of [YYYY-MM-DD HH:MM Pacific] — v[X.Y.Z]
 *(Most recent updates at top)*
 
 ### Summary of changes since last update

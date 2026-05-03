@@ -19,8 +19,14 @@ const C = {
   borderLight: "#3a4a3a",
 };
 
-type AppMode = "idle" | "selecting" | "annotating";
+type AppMode = "idle" | "onboarding" | "selecting" | "annotating";
 type DrawTool = "pen" | "rect" | "arrow" | "circle" | "text";
+
+interface PermissionStatus {
+  screenRecording: boolean;
+  systemEvents: boolean;
+  accessibility: boolean;
+}
 
 interface CaptureMetadata {
   app: string;
@@ -90,19 +96,96 @@ function App() {
   const [sessionCredits, setSessionCredits] = useState(0);
   const [selection, setSelection] = useState<SelectionRect | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const modeRef = useRef<AppMode>(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   const captureCredits = 1 + (transcript ? 2 : 0);
+
+  // ── Show onboarding window (resize + center + show) ──
+  const showOnboardingWindow = useCallback(async () => {
+    const win = getCurrentWindow();
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    await win.setSize(new LogicalSize(620, 680));
+    await win.setAlwaysOnTop(false);
+    await win.center();
+    await win.show();
+    await win.setFocus();
+  }, []);
+
+  // ── On mount: always show the welcome card. Content adapts based on
+  // whether permissions are all granted (shows usage tips) or missing
+  // (shows permission rows to fix). ──
+  useEffect(() => {
+    (async () => {
+      try {
+        const status = await invoke<PermissionStatus>("check_permissions");
+        setPermissions(status);
+      } catch (err) {
+        console.error("[VisionPipe] check_permissions failed:", err);
+      }
+      setMode("onboarding");
+      await showOnboardingWindow();
+    })();
+  }, [showOnboardingWindow]);
+
+  // ── Auto-poll permissions while onboarding is visible ──
+  useEffect(() => {
+    if (mode !== "onboarding") return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await invoke<PermissionStatus>("check_permissions");
+        setPermissions(status);
+      } catch {/* ignore */}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [mode]);
+
+  // ── Listen for tray menu's "Show Onboarding" action ──
+  useEffect(() => {
+    const unlisten = listen("show-onboarding", async () => {
+      try {
+        const status = await invoke<PermissionStatus>("check_permissions");
+        setPermissions(status);
+      } catch {/* ignore */}
+      setMode("onboarding");
+      await showOnboardingWindow();
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [showOnboardingWindow]);
 
   // ── Listen for hotkey event from Rust ──
   useEffect(() => {
     const unlisten = listen<string>("start-capture", (event) => {
+      // Ignore if not in idle mode (e.g., onboarding visible, or mid-capture)
+      if (modeRef.current !== "idle") {
+        console.log("[VisionPipe] start-capture ignored, mode is", modeRef.current);
+        return;
+      }
       console.log("[VisionPipe] start-capture received, payload:", event.payload);
       setMode("selecting");
       setSelection(null);
       setIsDragging(false);
     });
     return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  // ── Re-check permissions on demand (button click) ──
+  const recheckPermissions = useCallback(async () => {
+    try {
+      const status = await invoke<PermissionStatus>("check_permissions");
+      setPermissions(status);
+    } catch (err) {
+      console.error("[VisionPipe] recheck failed:", err);
+    }
+  }, []);
+
+  // ── Dismiss onboarding (Got it button) ──
+  const dismissOnboarding = useCallback(async () => {
+    const win = getCurrentWindow();
+    await win.hide();
+    setMode("idle");
   }, []);
 
   // ── Complete selection: capture the region via Rust, then show annotation UI ──
@@ -165,7 +248,7 @@ function App() {
     try {
       const { LogicalSize } = await import("@tauri-apps/api/dpi");
       await win.setAlwaysOnTop(false);
-      await win.setSize(new LogicalSize(920, 520));
+      await win.setSize(new LogicalSize(920, 552));
       await win.center();
       await new Promise((r) => setTimeout(r, 100));
       await win.show();
@@ -218,7 +301,7 @@ function App() {
     try {
       const { LogicalSize } = await import("@tauri-apps/api/dpi");
       await win.setAlwaysOnTop(false);
-      await win.setSize(new LogicalSize(920, 520));
+      await win.setSize(new LogicalSize(920, 552));
       await win.center();
       await new Promise((r) => setTimeout(r, 100));
       await win.show();
@@ -272,11 +355,11 @@ function App() {
     // Left column content (attribution + user request)
     type TextBlock = { text: string; bold: boolean; color: string };
     const leftBlocks: TextBlock[] = [];
-    leftBlocks.push({ text: `Annotation by VisionPipe.ai`, bold: true, color: C.amber });
+    leftBlocks.push({ text: `Annotation by Vision|Pipe.ai`, bold: true, color: C.amber });
     leftBlocks.push({ text: `Submitted by: ${username}`, bold: false, color: C.textMuted });
     leftBlocks.push({ text: "", bold: false, color: C.cream }); // spacer
     leftBlocks.push({ text: `${username}'s request: "${userCommentText}"`, bold: false, color: C.cream });
-    leftBlocks.push({ text: `[User input, passed verbatim by VisionPipe]`, bold: false, color: C.textDim });
+    leftBlocks.push({ text: `[User input, passed verbatim by Vision|Pipe]`, bold: false, color: C.textDim });
 
     // Right column content (capture metadata)
     const sizeStr = metadata.imageSizeKb > 1024
@@ -292,7 +375,7 @@ function App() {
       { text: `${metadata.memoryGb} | ${metadata.battery}`, color: C.textMuted },
       { text: `${metadata.username}@${metadata.hostname}`, color: C.textMuted },
       { text: `${metadata.timestamp}`, color: C.textMuted },
-      { text: `VisionPipe v0.1.0`, color: C.textDim },
+      { text: `Vision|Pipe v0.1.0`, color: C.textDim },
     ];
 
     // Determine canvas width first
@@ -461,7 +544,7 @@ function App() {
       lines.push(`color space: ${metadata.colorSpace} | dark mode: ${metadata.darkMode ? "yes" : "no"} | battery: ${metadata.battery}`);
       if (metadata.activeUrl) lines.push(`url: ${metadata.activeUrl}`);
       lines.push(`captured: ${metadata.timestamp} | image: ${metadata.captureWidth}x${metadata.captureHeight}px (${metadata.imageSizeKb > 1024 ? (metadata.imageSizeKb / 1024).toFixed(1) + " MB" : metadata.imageSizeKb + " KB"}) | ${metadata.captureMethod}`);
-      lines.push("---", "VisionPipe v0.1.0");
+      lines.push("---", "Vision|Pipe v0.1.0");
       await writeText(lines.join("\n"));
     }
 
@@ -511,6 +594,16 @@ function App() {
   // ═══════════════════════════════════════
   // IDLE
   // ═══════════════════════════════════════
+  if (mode === "onboarding") {
+    return (
+      <Onboarding
+        permissions={permissions}
+        onRecheck={recheckPermissions}
+        onDismiss={dismissOnboarding}
+      />
+    );
+  }
+
   if (mode === "idle") return null;
 
   // ═══════════════════════════════════════
@@ -580,10 +673,12 @@ function App() {
       fontFamily: "Verdana, Geneva, sans-serif",
     }}>
       <div style={{
-        display: "flex", width: 880, height: 460, borderRadius: 14, overflow: "hidden",
+        display: "flex", flexDirection: "column", width: 880, height: 492, borderRadius: 14, overflow: "hidden",
         border: `1px solid ${C.border}`,
         boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(46, 139, 122, 0.1)",
       }}>
+        <ChromeBar />
+        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
 
         {/* ── Left: Screenshot + Drawing Tools ── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: C.forest }}>
@@ -654,7 +749,7 @@ function App() {
         }}>
           {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <img src={logoUrl} style={{ width: 32, height: 32, borderRadius: 8 }} alt="VisionPipe logo" />
+            <img src={logoUrl} style={{ width: 32, height: 32, borderRadius: 8 }} alt="Vision|Pipe logo" />
             <div style={{ fontSize: 16, fontWeight: 700, color: C.cream }}>
               Vision<span style={{ color: C.teal, fontFamily: "'Source Code Pro', monospace" }}>|</span><span style={{ color: C.teal }}>Pipe</span>
             </div>
@@ -804,6 +899,7 @@ function App() {
             &#8629; pipe it <span style={{ color: C.teal }}>|</span> esc cancel
           </div>
         </div>
+        </div>
       </div>
     </div>
   );
@@ -841,6 +937,243 @@ function ToolButton({ icon, active, onClick, title }: { icon: string; active: bo
     >
       {renderIcon()}
     </button>
+  );
+}
+
+// ── Draggable chrome bar (top of every visible card) ──
+function ChromeBar() {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // left click only
+    e.preventDefault();
+    getCurrentWindow().startDragging().catch((err) => {
+      console.error("[VisionPipe] startDragging failed:", err);
+    });
+  };
+
+  const dotStyle: React.CSSProperties = {
+    width: 3, height: 3, borderRadius: "50%", background: C.textMuted, pointerEvents: "none",
+  };
+
+  return (
+    <div
+      onMouseDown={handleMouseDown}
+      style={{
+        height: 32,
+        flexShrink: 0,
+        background: C.deepForest,
+        borderBottom: `1px solid ${C.border}`,
+        display: "flex",
+        alignItems: "center",
+        cursor: "grab",
+        userSelect: "none",
+      }}
+    >
+      {/* Left: logo + wordmark */}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, pointerEvents: "none" }}>
+        <img src={logoUrl} style={{ width: 16, height: 16 }} alt="Vision|Pipe logo" />
+        <span style={{ color: C.cream, fontSize: 12, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif" }}>Vision|Pipe</span>
+      </div>
+      {/* Center: 3 columns × 2 rows of dots, centered on the bar */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 3px)",
+        gridTemplateRows: "repeat(2, 3px)",
+        gap: 3,
+        pointerEvents: "none",
+      }}>
+        <span style={dotStyle} />
+        <span style={dotStyle} />
+        <span style={dotStyle} />
+        <span style={dotStyle} />
+        <span style={dotStyle} />
+        <span style={dotStyle} />
+      </div>
+      {/* Right spacer mirrors the left flex so the grip stays centered */}
+      <div style={{ flex: 1 }} />
+    </div>
+  );
+}
+
+// ── First-launch / always-on welcome card ──
+// Shows on every launch. Content adapts to permission state:
+//   - Any missing → permission rows with fix-it buttons
+//   - All granted → usage instructions
+function Onboarding({ permissions, onRecheck, onDismiss }: {
+  permissions: PermissionStatus | null;
+  onRecheck: () => void;
+  onDismiss: () => void;
+}) {
+  const allGranted = !!(
+    permissions?.screenRecording &&
+    permissions?.systemEvents &&
+    permissions?.accessibility
+  );
+
+  const openPane = async (pane: "screen_recording" | "automation" | "accessibility") => {
+    try {
+      await invoke("open_settings_pane", { pane });
+    } catch (e) {
+      console.error("[VisionPipe] open_settings_pane failed:", e);
+    }
+  };
+
+  return (
+    <div style={{
+      width: "100vw", height: "100vh", display: "flex", alignItems: "stretch", justifyContent: "stretch",
+      background: "transparent",
+      fontFamily: "Verdana, Geneva, sans-serif",
+    }}>
+      <div style={{
+        display: "flex", flexDirection: "column", flex: 1, borderRadius: 14, overflow: "hidden",
+        border: `1px solid ${C.border}`, background: C.forest,
+        boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(46, 139, 122, 0.1)",
+      }}>
+        <ChromeBar />
+        <div style={{ flex: 1, padding: 24, overflowY: "auto", color: C.cream }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Welcome to Vision|Pipe</h1>
+          <p style={{ margin: "4px 0 0 0", color: C.amber, fontSize: 14, fontWeight: 700 }}>
+            Give your LLM eyes.
+          </p>
+
+          {!allGranted ? (
+            <>
+              <p style={{ marginTop: 8, marginBottom: 16, color: C.textMuted, fontSize: 13 }}>
+                Enable three permissions and you'll be ready to capture.
+              </p>
+              <PermissionRow
+                granted={!!permissions?.screenRecording}
+                label="Screen Recording"
+                description="Required to capture screenshots. If Vision|Pipe isn't already in the list, click the + button and add Vision|Pipe from your Applications folder, then toggle it on."
+                onOpen={() => openPane("screen_recording")}
+                onRecheck={onRecheck}
+              />
+              <PermissionRow
+                granted={!!permissions?.systemEvents}
+                label="Automation: System Events"
+                description="Lets Vision|Pipe read the active app and window so it can include them as metadata in captures. Found under System Settings → Privacy & Security → Automation."
+                onOpen={() => openPane("automation")}
+                onRecheck={onRecheck}
+              />
+              <PermissionRow
+                granted={!!permissions?.accessibility}
+                label="Accessibility"
+                description="Required so the ⌘⇧C global shortcut works system-wide. Found under System Settings → Privacy & Security → Accessibility. Click + to add Vision|Pipe if it's not listed."
+                onOpen={() => openPane("accessibility")}
+                onRecheck={onRecheck}
+              />
+            </>
+          ) : (
+            <>
+              <p style={{ marginTop: 16, marginBottom: 4, color: C.teal, fontSize: 13, fontWeight: 600 }}>
+                ✓ You're all set.
+              </p>
+              <p style={{ marginTop: 0, marginBottom: 16, color: C.textMuted, fontSize: 13 }}>
+                All three permissions are granted. Here's how to use Vision|Pipe:
+              </p>
+
+              <ul style={{ margin: 0, paddingLeft: 20, color: C.cream, fontSize: 13, lineHeight: 1.8 }}>
+                <li>Press <KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>C</KbdKey> anywhere to start a capture.</li>
+                <li>Drag to select a region, or press <KbdKey>Enter</KbdKey> for a fullscreen capture.</li>
+                <li>Press <KbdKey>Esc</KbdKey> to cancel.</li>
+                <li>Add an annotation, then click <strong style={{ color: C.amber }}>Pipe it</strong> to copy a markdown-ready capture to your clipboard.</li>
+                <li>Paste into ChatGPT, Claude, Gemini, or any LLM that accepts images + text.</li>
+              </ul>
+
+              <div style={{ marginTop: 20, fontSize: 12, color: C.textDim }}>
+                Re-open this welcome from the menu bar tray icon → <em>Show Onboarding…</em>
+              </div>
+
+              <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  onClick={onDismiss}
+                  style={{
+                    background: C.teal, color: C.cream, border: "none",
+                    padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  }}
+                >Got it</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Small inline keyboard-key style ──
+function KbdKey({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd style={{
+      display: "inline-block",
+      padding: "1px 6px",
+      margin: "0 2px",
+      fontFamily: "'Source Code Pro', monospace",
+      fontSize: 11,
+      color: C.cream,
+      background: C.deepForest,
+      border: `1px solid ${C.border}`,
+      borderRadius: 4,
+      verticalAlign: "baseline",
+    }}>{children}</kbd>
+  );
+}
+
+// ── Single permission row inside Onboarding ──
+function PermissionRow({ granted, label, description, onOpen, onRecheck }: {
+  granted: boolean;
+  label: string;
+  description: string;
+  onOpen: () => void;
+  onRecheck: () => Promise<void> | void;
+}) {
+  const [checking, setChecking] = useState(false);
+
+  const handleRecheck = async () => {
+    setChecking(true);
+    try {
+      await onRecheck();
+    } finally {
+      // Keep "Checking…" visible long enough for the user to notice
+      setTimeout(() => setChecking(false), 400);
+    }
+  };
+
+  return (
+    <div style={{
+      border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginBottom: 12,
+      background: C.deepForest,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{
+          color: granted ? C.teal : C.sienna, fontWeight: 700, fontSize: 16, width: 16, textAlign: "center",
+        }}>{granted ? "✓" : "✗"}</span>
+        <span style={{ color: C.cream, fontWeight: 600, fontSize: 14 }}>{label}</span>
+      </div>
+      <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 8, marginLeft: 24 }}>{description}</div>
+      <div style={{ display: "flex", gap: 8, marginLeft: 24, alignItems: "center" }}>
+        <button
+          onClick={onOpen}
+          style={{
+            background: C.teal, color: C.cream, border: "none",
+            padding: "6px 12px", borderRadius: 4, fontSize: 12, cursor: "pointer", fontWeight: 600,
+          }}
+        >Open System Settings</button>
+        <button
+          onClick={handleRecheck}
+          disabled={checking}
+          style={{
+            background: checking ? C.deepForest : "transparent",
+            color: checking ? C.amber : C.textMuted,
+            border: `1px solid ${checking ? C.amber : C.border}`,
+            padding: "6px 12px", borderRadius: 4, fontSize: 12,
+            cursor: checking ? "default" : "pointer",
+            fontWeight: checking ? 600 : 400,
+            transition: "all 150ms ease",
+            opacity: checking ? 0.9 : 1,
+          }}
+        >{checking ? "Checking…" : "Re-check"}</button>
+      </div>
+    </div>
   );
 }
 

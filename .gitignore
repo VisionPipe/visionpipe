@@ -8,3 +8,4 @@ src-tauri/target/
 .next/
 .superpowers/
 .claude/settings.local.json
+scripts/.release-notes.md
