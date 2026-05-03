@@ -1,3 +1,22 @@
+## Progress Update as of 2026-05-02 21:00 PDT — v0.3.2 (Task 9: Header bar)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Implemented the Header component as visual scaffolding for the SessionWindow. Created `src/lib/ui-tokens.ts` exporting the shared earthy color palette (teal, amber, cream, forest, etc.) and font constants extracted from the prior App.tsx, ensuring visual consistency across the session UI. Created `src/components/Header.tsx` with mic indicator (status dot, recording label with network state), view mode toggle (interleaved/split), and overflow menu (three-option prompt-based menu: new session, open folder, settings). The Header reads the current session from context and renders the session ID as a monospace label with clickable-to-copy folder path. Modified `src/components/SessionWindow.tsx` to mount the Header above a fullscreen flex layout with the JSON dump. No functional mic/network state yet (placeholder values: `micRecording=false`, `networkState="local-only"`; real state lands in Phase E). TypeScript compilation 0 errors; all 18 tests still pass (no new tests for Header — component is visual scaffolding); Vite build succeeds (220 KB JS bundle).
+
+### Detail of changes made:
+
+- **`src/lib/ui-tokens.ts`** (created) — exports color constant object `C` (16 colors: teal, amber, cream, forest, deepForest, sienna, textBright, textMuted, textDim, border, borderLight) and two font constants (`FONT_BODY = "Verdana, sans-serif"`, `FONT_MONO = "'Source Code Pro', Menlo, monospace"`). Used throughout Header and intended for all future session UI components.
+- **`src/components/Header.tsx`** (created) — exports `Header` component with `Props` interface: `micRecording` (boolean), `micPermissionDenied` (boolean), `networkState` ("live" | "local-only" | "reconnecting"), and five event callbacks (`onToggleMic`, `onToggleViewMode`, `onOpenSettings`, `onNewSession`, `onOpenSessionFolder`). Helper functions: `dotColor()` maps network state + recording flag to indicator dot color (red when live+recording, amber when reconnecting, muted otherwise), `networkLabel()` maps network state to label string. Header layout is flexbox row (3 sections: logo+session-id, centered mic button, right-aligned view toggle + overflow menu). Mic button shows status dot + "Recording · {networkLabel}" or "Paused". View toggle button shows "Detach transcript" (interleaved mode) or "Attach transcript" (split mode) with ◫ icon. `OverflowMenu` helper renders ⋮ button with a prompt-based menu (v0.2 temporary; real popover lands in polish phase).
+- **`src/components/SessionWindow.tsx`** (modified) — replaced placeholder with Header integration. Changed layout from padding-only to `display: flex; flexDirection: column; height: 100vh` (fullscreen). Added `Header` import and component mount with hardcoded props (all callbacks dispatch reducer actions or alert; `micRecording=false`, `networkState="local-only"`). Pre-existing JSON dump moved into scrollable area below header. Functional view toggle connected: `onToggleViewMode` dispatches `TOGGLE_VIEW_MODE` action; `onNewSession` dispatches `END_SESSION` action.
+
+### Potential concerns to address:
+
+- None.
+
+---
+
 ## Progress Update as of 2026-05-02 20:58 PDT — v0.3.2 (Task 8: persistence + debounced writes)
 *(Most recent updates at top)*
 
