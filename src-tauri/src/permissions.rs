@@ -82,65 +82,44 @@ fn check_accessibility() -> bool {
 }
 
 /// Check whether VisionPipe has permission to send Apple Events to System
-/// Events, WITHOUT prompting the user. Returns true only if a prior grant
-/// exists; "not yet decided" and "denied" both return false.
+/// Events. We use `osascript` rather than the Carbon
+/// AEDeterminePermissionToAutomateTarget API because the Carbon API returns
+/// procNotFound (-600) when System Events isn't running — and the official
+/// "launch it first via open -jgb" workaround is racy.
 ///
-/// AEDeterminePermissionToAutomateTarget returns procNotFound (-600) if the
-/// target app isn't running — and System Events is a launch-on-demand
-/// daemon. So we launch it first via `open -b` (which doesn't require Apple
-/// Events permission) before checking.
+/// `osascript -e 'tell application "System Events" to ...'` causes
+/// AppleScript itself to launch System Events synchronously and then send
+/// the event. If permission is granted, we get a count back. If denied or
+/// not-yet-decided, osascript fails (and on first run, may show the system
+/// prompt — that's why the frontend shows the welcome card before calling
+/// check_permissions).
 fn check_system_events() -> bool {
     #[cfg(target_os = "macos")]
     {
-        // Ensure System Events is running. `open -jgb` = launch by bundle ID,
-        // hidden, don't activate. Returns immediately even if already running.
-        let _ = std::process::Command::new("open")
-            .args(["-jgb", "com.apple.systemevents"])
+        let result = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "tell application \"System Events\" to return count of processes",
+            ])
             .output();
 
-        // Give launchd a moment to attach before we query.
-        std::thread::sleep(std::time::Duration::from_millis(80));
-
-        let bundle_id = b"com.apple.systemevents";
-        let mut desc = AEDesc {
-            descriptor_type: 0,
-            data_handle: ptr::null_mut(),
-        };
-
-        let create_err = unsafe {
-            AECreateDesc(
-                TYPE_APPLICATION_BUNDLE_ID,
-                bundle_id.as_ptr() as *const c_void,
-                bundle_id.len() as isize,
-                &mut desc,
-            )
-        };
-        if create_err != 0 {
-            eprintln!("[VisionPipe] AECreateDesc failed: {}", create_err);
-            return false;
+        match result {
+            Ok(o) => {
+                let granted = o.status.success() && !o.stdout.is_empty();
+                eprintln!(
+                    "[VisionPipe] osascript SystemEvents: exit={} stdout={:?} stderr={:?} -> granted={}",
+                    o.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&o.stdout).trim(),
+                    String::from_utf8_lossy(&o.stderr).trim(),
+                    granted
+                );
+                granted
+            }
+            Err(e) => {
+                eprintln!("[VisionPipe] osascript spawn error: {}", e);
+                false
+            }
         }
-
-        let status = unsafe {
-            AEDeterminePermissionToAutomateTarget(
-                &desc,
-                TYPE_WILD_CARD,
-                TYPE_WILD_CARD,
-                0, // askUserIfNeeded = false (no prompt)
-            )
-        };
-
-        unsafe {
-            AEDisposeDesc(&mut desc);
-        }
-
-        eprintln!(
-            "[VisionPipe] AEDeterminePermissionToAutomateTarget(System Events) status: {}",
-            status
-        );
-
-        // 0 = noErr (granted). Anything else (-1743 denied, -1744 not yet
-        // determined, -600 procNotFound) is treated as not granted.
-        status == 0
     }
 
     #[cfg(not(target_os = "macos"))]

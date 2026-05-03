@@ -114,19 +114,21 @@ function App() {
     await win.setFocus();
   }, []);
 
-  // ── On mount: always show the welcome card. Content adapts based on
-  // whether permissions are all granted (shows usage tips) or missing
-  // (shows permission rows to fix). ──
+  // ── On mount: show the welcome card FIRST, then check permissions. ──
+  // The order matters because check_permissions for System Events uses
+  // osascript, which can trigger a TCC prompt on first ever run. We want
+  // the welcome card visible behind the prompt so the user has context.
   useEffect(() => {
     (async () => {
+      setMode("onboarding");
+      await showOnboardingWindow();
+
       try {
         const status = await invoke<PermissionStatus>("check_permissions");
         setPermissions(status);
       } catch (err) {
         console.error("[VisionPipe] check_permissions failed:", err);
       }
-      setMode("onboarding");
-      await showOnboardingWindow();
     })();
   }, [showOnboardingWindow]);
 
