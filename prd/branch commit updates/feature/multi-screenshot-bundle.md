@@ -4,6 +4,33 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 09:29 PDT — v0.3.7
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Release v0.3.7 (auto-generated entry — no `scripts/.release-notes.md` was provided).
+
+### Detail of changes made:
+
+- Fix mic + speech recognition onboarding buttons (call Apple SDK first)
+- Release v0.3.6
+- Release v0.3.5
+- Update README to reflect v0.3.3 reality (8 inaccuracies fixed)
+- Release v0.3.4
+- Spec 1 implementation complete; overnight subagent-driven run finished
+- Release v0.3.3
+- Add manual smoke-test checklist for Spec 1 verification
+- Disclose Deepgram cloud dependency honestly in README v0.2 transcription section
+- Wire window-scoped hotkeys for copy/toggle/rerecord
+
+### Potential concerns to address:
+
+- Auto-generated entry; a human-written summary would be more useful for future LLM context.
+
+---
+
+
 ## Progress Update as of 2026-05-03 09:23 PDT — v0.3.6
 *(Most recent updates at top)*
 
