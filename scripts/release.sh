@@ -35,7 +35,10 @@ WEB_DOWNLOADS_RELATIVE="public/downloads"
 # --- derived paths -----------------------------------------------------------
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_PATH="$PROJECT_ROOT/src-tauri/target/release/bundle/macos/$APP_NAME"
+# APP_PATH is resolved AFTER `pnpm tauri build` finishes, because the bundle
+# location depends on whether we're in the legacy single-crate layout
+# (src-tauri/target/) or the new Cargo workspace (root target/).
+APP_PATH=""
 WEB_DOWNLOADS="$WEB_PROJECT/$WEB_DOWNLOADS_RELATIVE"
 NOTES_FILE="$PROJECT_ROOT/scripts/.release-notes.md"
 CURRENT_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD)
@@ -147,8 +150,23 @@ pnpm tauri build --bundles app
 export APPLE_ID="$SAVED_APPLE_ID"
 export APPLE_PASSWORD="$SAVED_APPLE_PASSWORD"
 
-[ -d "$APP_PATH" ] || fail ".app not found after Tauri build at $APP_PATH"
-ok ".app built and signed"
+# Resolve APP_PATH now that the build has run. Workspace layout puts the
+# bundle at $PROJECT_ROOT/target/...; legacy src-tauri-only layout puts it
+# at $PROJECT_ROOT/src-tauri/target/...
+if [ -d "$PROJECT_ROOT/target/release/bundle/macos/$APP_NAME" ]; then
+  APP_PATH="$PROJECT_ROOT/target/release/bundle/macos/$APP_NAME"
+elif [ -d "$PROJECT_ROOT/src-tauri/target/release/bundle/macos/$APP_NAME" ]; then
+  APP_PATH="$PROJECT_ROOT/src-tauri/target/release/bundle/macos/$APP_NAME"
+else
+  fail ".app not found in either target/ or src-tauri/target/"
+fi
+
+# Sanity check: the bundled binary's version should match what we just bumped to.
+BUNDLE_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "unknown")
+if [ "$BUNDLE_VERSION" != "$VERSION" ]; then
+  fail "Bundle version $BUNDLE_VERSION at $APP_PATH does not match expected $VERSION — stale build artifact?"
+fi
+ok ".app built and signed (version $BUNDLE_VERSION at $APP_PATH)"
 
 # Tauri v2 doesn't expose arbitrary Info.plist keys via tauri.conf.json,
 # so we inject the macOS privacy usage descriptions post-build. Without
