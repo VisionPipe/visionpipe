@@ -1,5 +1,8 @@
 use base64::Engine;
+use image::{ImageBuffer, Rgba};
 use std::process::Command;
+use std::thread::sleep;
+use std::time::Duration;
 
 /// Read a PNG file from disk and return as a base64 data URI.
 fn png_file_to_data_uri(path: &str) -> Result<String, Box<dyn std::error::Error>> {

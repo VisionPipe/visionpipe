@@ -1,6 +1,6 @@
 [package]
 name = "visionpipe"
-version = "0.3.7"
+version = "0.3.8"
 description = "Screenshot to AI in one keystroke"
 authors = ["VisionPipe"]
 edition = "2021"
@@ -28,6 +28,9 @@ libc = "0.2"
 chrono = "0.4"
 dirs = "5"
 keyring = "3"
+
+# Used by the scrolling-screenshot stitcher in capture.rs
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Audio capture
 cpal = "0.15"
