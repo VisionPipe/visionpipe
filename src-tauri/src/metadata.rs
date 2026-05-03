@@ -339,12 +339,19 @@ fn get_battery() -> String {
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| {
-                // Extract percentage and charging status
+                // Extract percentage and charging status. `pmset -g batt` outputs
+                // a line like:
+                //     -InternalBattery-0 (id=...)\t100%; charged; 0:00 remaining present: true
+                // We split on tab to get everything after the battery descriptor,
+                // then drop the trailing " present: <bool>" bookkeeping that's
+                // not user-facing.
                 for line in s.lines() {
                     if line.contains('%') {
                         let parts: Vec<&str> = line.split('\t').collect();
                         if parts.len() >= 2 {
-                            return parts[1].trim().to_string();
+                            let raw = parts[1].trim();
+                            let cleaned = raw.split(" present:").next().unwrap_or(raw);
+                            return cleaned.trim().to_string();
                         }
                     }
                 }

@@ -4,6 +4,25 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 18:10 PDT — v0.2.7
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fix the battery metadata string. `pmset -g batt` outputs a tab-delimited line ending in `… present: true` — the `present: <bool>` is internal bookkeeping, not something a user (or LLM) needs to see. The metadata parser was including it, so captures showed strings like `100%; charged; 0:00 remaining present: true`. Now it gets trimmed cleanly to `100%; charged; 0:00 remaining`.
+
+### Detail of changes made:
+
+- **`src-tauri/src/metadata.rs`** — `get_battery()` now splits the parsed line at `" present:"` and keeps only the prefix. Comment in code explains the pmset output format so the trim is documented (it's the kind of thing that looks pointless until you've seen the raw output).
+
+### Potential concerns to address:
+
+- **`0:00 remaining` is still awkward when the battery is fully charged.** A cleaner output for the charged state would be just `100%; charged` without the time. Worth a follow-up trim that drops `; 0:00 remaining` when it's a no-op time. Punted to keep this patch focused.
+- **No unit test for the battery parser.** A small Rust test with sample `pmset` output strings would catch regressions if Apple changes the format. Worth adding when we touch this file again.
+
+---
+
+
 ## Progress Update as of 2026-05-02 18:06 PDT — v0.2.6
 *(Most recent updates at top)*
 
