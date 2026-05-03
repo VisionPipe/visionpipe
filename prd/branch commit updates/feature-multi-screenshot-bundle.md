@@ -4,6 +4,23 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 23:36 PDT — v0.3.2 (Session window sizes to ~70% after capture)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Fixed a UX bug where the main window stayed fullscreen after the first screenshot capture. Background: the Rust `Cmd+Shift+C` handler in `src-tauri/src/lib.rs` resizes the window to `monitor.size()` so the `SelectionOverlay` can cover the screen for region-select; previously nothing ever shrank it back, so the post-capture session view rendered edge-to-edge. The fix appends a resize block to `onCapture` in `src/App.tsx` (after `await win.show()`/`setFocus()`/`setAlwaysOnTop(false)`): it dynamically imports `currentMonitor` from `@tauri-apps/api/window`, queries the active monitor, computes a target of 70% width × 85% height (capped to 800×600 min and 1600×1000 max in logical pixels, then scaled by `monitor.scaleFactor` so we operate in physical pixels — matching the Rust handler's `PhysicalSize`/`PhysicalPosition` pattern), centers it inside the monitor bounds, and applies via `setSize` + `setPosition`. The whole block is wrapped in try/catch so a sizing failure never breaks the capture flow. The Rust handler is untouched (selection still needs fullscreen), the onboarding flow's 620×680 `LogicalSize` is untouched, and `SelectionOverlay` continues to operate on the fullscreen window during `selecting` mode. `pnpm tsc --noEmit` clean, 18/18 tests pass, Vite build succeeds at 240 KB (74 KB gzipped).
+
+### Detail of changes made:
+- **`src/App.tsx`** — `onCapture` callback: appended ~30 LOC after the existing `await win.setAlwaysOnTop(false)` line. Dynamic-imports `currentMonitor` (top-level export from `@tauri-apps/api/window`) and `PhysicalSize`/`PhysicalPosition` (from `@tauri-apps/api/dpi`). Reads `monitor.size`, `monitor.position`, `monitor.scaleFactor`. Computes `targetW = clamp(round(monitorW * 0.70), 800*scale, 1600*scale)`, same shape for height with 0.85 / 600 / 1000. Positions at `monitor.position.{x,y} + (monitor.size.{w,h} - target) / 2`. Wrapped in try/catch with `console.error` on failure.
+
+### Potential concerns to address:
+- The `onCancelCapture` path (Esc during selection when a session is already active) still leaves the window fullscreen. In practice this only matters if the user starts capture #2+, then cancels — the existing session window would render fullscreen until the next successful capture resizes it. Spec only asked to fix the post-capture path; flagging for awareness.
+- Sizing happens AFTER `setMode("session")`, so there is a brief frame where the React tree mounts at fullscreen before the resize lands. In practice this is invisible because `await win.show()` already happened and the Tauri size update is fast, but a perfectly clean implementation would resize before showing. Left as-is to match the existing show→focus→sizing ordering.
+- The two pre-existing Vite "dynamically imported but also statically imported" warnings for `@tauri-apps/api/window` and `/dpi` remain (no change in severity); we add one more dynamic import to `window` but that module was already in both buckets.
+
+---
+
 ## Progress Update as of 2026-05-02 23:33 PDT — v0.3.2 (Restore onboarding flow after rewrite)
 *(Most recent updates at top)*
 

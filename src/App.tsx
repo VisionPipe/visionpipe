@@ -168,6 +168,36 @@ function AppInner() {
     await win.show();
     await win.setFocus();
     await win.setAlwaysOnTop(false);
+
+    // ── Resize the (currently fullscreen) window down to a session-friendly
+    // size centered on the current monitor. The Rust hotkey handler grew it
+    // to monitor.size() so the SelectionOverlay could cover the screen; now
+    // that the overlay is gone, shrink it back. Use Physical units so this
+    // matches the Rust handler's PhysicalSize / PhysicalPosition pattern and
+    // we don't fight DPR (the monitor query returns physical pixels).
+    try {
+      const { currentMonitor } = await import("@tauri-apps/api/window");
+      const monitor = await currentMonitor();
+      if (monitor) {
+        const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+        const scale = monitor.scaleFactor ?? 1;
+        const monitorW = monitor.size.width;
+        const monitorH = monitor.size.height;
+        // Min/max caps are expressed in logical pixels; convert to physical.
+        const minWPhys = Math.round(800 * scale);
+        const minHPhys = Math.round(600 * scale);
+        const maxWPhys = Math.round(1600 * scale);
+        const maxHPhys = Math.round(1000 * scale);
+        const targetW = Math.max(minWPhys, Math.min(maxWPhys, Math.round(monitorW * 0.70)));
+        const targetH = Math.max(minHPhys, Math.min(maxHPhys, Math.round(monitorH * 0.85)));
+        const targetX = monitor.position.x + Math.round((monitorW - targetW) / 2);
+        const targetY = monitor.position.y + Math.round((monitorH - targetH) / 2);
+        await win.setSize(new PhysicalSize(targetW, targetH));
+        await win.setPosition(new PhysicalPosition(targetX, targetY));
+      }
+    } catch (err) {
+      console.error("[VisionPipe] session window resize failed:", err);
+    }
   }, [state.session, dispatch]);
 
   const onCancelCapture = useCallback(async () => {
