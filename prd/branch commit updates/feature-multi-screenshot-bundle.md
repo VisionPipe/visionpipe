@@ -4,6 +4,26 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch. I
 
 ---
 
+## Progress Update as of 2026-05-02 23:42 PDT — v0.3.2 (Task 13: MediaRecorder wrapper)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Added Phase E's foundational audio primitive: a thin wrapper around the browser `MediaRecorder` API at `src/lib/audio-recorder.ts`. Pure browser code — no Tauri Rust changes, no UI wiring, no reducer touching this commit. The factory `createRecorder()` requests microphone access via `navigator.mediaDevices.getUserMedia({ audio: true })`, instantiates a `MediaRecorder` with `audio/webm;codecs=opus`, and returns a `RecorderHandle` exposing `start/pause/resume/stop/elapsedSec/isRecording/onChunk`. The recorder ticks chunks every 1000ms (`CHUNK_INTERVAL_MS`); on each `dataavailable` it pushes to an internal `chunks: Blob[]` buffer AND fires every registered listener so Task ~16's Deepgram WebSocket client can stream them live. `stop()` returns a Promise that resolves with the concatenated `audio/webm;codecs=opus` Blob, then resets the buffer and stops the underlying media tracks (releases the mic indicator). `elapsedSec()` does paused-aware bookkeeping via `performance.now()` — `startTime` captured on start, `pausedAccumulated` increments by `now - pauseStarted` each resume, and while paused the "now" is frozen at `pauseStarted` so the displayed elapsed value doesn't tick during pause. `pnpm tsc --noEmit` clean, 18/18 tests pass (no new tests this task — MediaRecorder is undefined in jsdom; manual smoke test happens in Task 14), Vite build succeeds at 243.50 kB (74.56 kB gzipped — no LOC delta because nothing imports the file yet, the chunk is tree-shaken).
+
+### Detail of changes made:
+- **New `src/lib/audio-recorder.ts`** (~70 LOC): Single exported async factory `createRecorder(): Promise<RecorderHandle>` plus the `AudioChunkListener` type alias and `RecorderHandle` interface. Closure-scoped state (`chunks`, `listeners`, `startTime`, `pausedAccumulated`, `pauseStarted`, `recording`) — no class, no `this`. The `dataavailable` handler is wired once at construction time, before any control method is callable. `stop()` uses `addEventListener("stop", ..., { once: true })` so repeated stop calls don't accumulate handlers (though calling stop twice would still mis-resolve; Task 14's wiring should treat the handle as one-shot). Stream tracks are stopped inside the stop handler so the macOS mic indicator clears as soon as the Blob resolves.
+
+### Potential concerns to address (worth flagging for Task 14):
+- **Permission denial**: `getUserMedia` rejects if the user denies the mic prompt or revokes mic access in System Settings. Task 14 needs to catch this and surface a recoverable error (e.g., re-route to onboarding's mic permission row, or render a banner inside the session window). Currently the factory just lets the rejection propagate.
+- **Browser support assumption**: `audio/webm;codecs=opus` works in WKWebView on macOS 12+, but if Tauri ever ships a macOS build targeting older WebKit we'd need a `MediaRecorder.isTypeSupported` fallback. Not a concern for current targets.
+- **`stop()` is one-shot**: Calling `stop()` after the recorder is already stopped will hang (the "stop" event won't fire again). Task 14 should ensure the handle is discarded after stop and a fresh one is created for re-record mode (which the spec already calls for — separate output, original master untouched).
+- **Pause/resume race with chunk ticks**: If a `dataavailable` fires between `recorder.pause()` and the state transition, that chunk's audio belongs to the active period — fine for downstream concatenation but worth knowing if we ever align chunk indices to elapsed time.
+- **`elapsedSec()` returns 0 before `start()`**: Intentional sentinel; reducer code in Task 14 should still guard against stamping `audioOffset` on a not-yet-started session.
+- **No test coverage this commit**: As specified, MediaRecorder is unavailable in jsdom. Task 14's session-lifecycle wiring is the first place this gets exercised end-to-end.
+
+---
+
 ## Progress Update as of 2026-05-02 23:40 PDT — v0.3.2 (Task 20: SplitView — fixes Detach transcript toggle)
 *(Most recent updates at top)*
 
