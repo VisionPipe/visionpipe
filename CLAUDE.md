@@ -1,54 +1,30 @@
-# VisionPipe — project-specific instructions
+# Vision|Pipe — project-specific instructions
 
 These instructions apply to **any Claude session working in this project**. They do not apply to other projects.
 
+## Project structure
+
+- `src-tauri/` — Rust backend for the Tauri v2 desktop app (audio, speech, capture, metadata, permissions, lib.rs entry)
+- `src/` — React + TypeScript frontend (Vite); `App.tsx` holds the onboarding card and capture/annotation flow
+- `crates/` — Rust workspace crates (`visionpipe-core` shared library, `visionpipe-mcp` MCP server, `vp-cli` command-line tool)
+- `prd/` — product requirements, design docs, and `prd/branch commit updates/<branch>.md` per-branch progress logs
+- `docs/superpowers/specs/` — design specs (one per major feature)
+- `docs/superpowers/plans/` — implementation plans
+- `scripts/release.sh` — full release pipeline (version bump → build → sign → notarize → DMG → GitHub release → brew tap → commit + push)
+
 ## Progress logging on every commit
 
-For **every commit** on a development branch in this project, the corresponding progress log in `prd/` must be updated. The log gives a future Claude session enough context to ramp up on the branch without re-reading every commit.
+For **every commit** on a development branch, the corresponding progress log in `prd/branch commit updates/<branch-name>.md` must be updated. The log gives a future Claude session enough context to ramp up without re-reading every commit.
 
 ### Workflow
 
-1. **Find the log file.** Run `git rev-parse --abbrev-ref HEAD` to get the current branch name. Look for `prd/<branch-name>.md`.
-2. **If the log file exists**, read its most recent entry to understand what was last documented, then prepend a new dated entry at the top.
-3. **If the log file does not exist**, create it with the branch's name and add the first entry. Use the same `# Branch Progress: <branch-name>` header that other branch logs use.
-4. **Stage the log file alongside your code changes** so the commit includes both. Do not split the doc update into a separate commit — code and log update belong in the same commit.
-5. **After committing, tell the user explicitly: "I committed and updated `prd/<branch-name>.md`."** This is non-negotiable — the user needs the confirmation to know the log is current.
-
-### Version bump on every build
-
-**Every release build bumps the version.** This is non-negotiable — `./scripts/release.sh` does it automatically. The minimum bump is **patch** (`+0.0.1`), even for a single-character fix. There is no such thing as "rebuild without bumping."
-
-Choose the bump size based on the magnitude of the change. The script defaults to **patch**; specify `--bump minor` or `--bump major` to override (or set it in the frontmatter of `scripts/.release-notes.md`).
-
-**Patch (`+0.0.1` — e.g. `0.1.0 → 0.1.1`)** — the default. Use for:
-- Bug fixes
-- Copy / wording tweaks
-- Style adjustments (color, spacing, font size)
-- Small UI nudges (a single layout tweak)
-- Tweaks to log messages, comments, or internal naming
-- Re-bundling without code changes (e.g. retrying a build that failed)
-
-**Minor (`+0.1.0` — e.g. `0.1.5 → 0.2.0`)** — meaningful additions or behavior changes. Use for:
-- New features (a new screen, a new keyboard shortcut, a new CLI flag)
-- A new UI flow or user-facing component
-- Refactors that change observable behavior
-- Adding a new dependency or system integration
-- Changes that warrant a paragraph in the release notes
-
-**Major (`+1.0.0` — e.g. `0.9.0 → 1.0.0`)** — breaking or milestone. Use for:
-- The first production-stable release
-- Removing or renaming a public API
-- A fundamental rewrite or architecture change
-- Bundle-identifier changes
-- Any release a user would describe as "the new version"
-
-The script keeps the version in sync across **three files**: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`. Don't edit them by hand.
-
-The new version is written into the progress log entry's heading — e.g. `## Progress Update as of 2026-05-02 17:30 PDT — v0.1.1`. This makes the version-to-commit mapping trivially findable.
+1. **Find the log file.** Run `git rev-parse --abbrev-ref HEAD` to get the branch name. Look for `prd/branch commit updates/<branch-name>.md`.
+2. **If the log file exists**, read its most recent entry, then prepend a new dated entry at the top.
+3. **If the log file does not exist**, create it with `# Branch Progress: <branch-name>` as the header and add the first entry.
+4. **Stage the log file alongside your code changes** so the commit includes both. Do not split the doc update into a separate commit.
+5. **After committing, tell the user explicitly: "I committed and updated `prd/branch commit updates/<branch-name>.md`."**
 
 ### Entry format
-
-Use this exact format. Newest entries go at the top of the file.
 
 ```
 ## Progress Update as of [YYYY-MM-DD HH:MM Pacific] — v[X.Y.Z]
@@ -58,48 +34,74 @@ Use this exact format. Newest entries go at the top of the file.
 [One paragraph maximum summarizing what's changed since the previous entry.]
 
 ### Detail of changes made:
-- [Bullet points with enough context for a future LLM to ramp up quickly on the branch and the work in this commit. Reference file paths and commit hashes where useful.]
+- [Bullet points with enough context for a future LLM to ramp up quickly on the branch. Reference file paths, function names, architectural decisions, and why things were done a certain way.]
 
 ### Potential concerns to address:
-- [Bullet points calling out anything in the codebase that is or could become an issue as work continues.]
+- [Bullet points calling out anything in the codebase that is or could become an issue.]
 
 ---
 ```
 
-Use Pacific time (PDT in summer, PST in winter) for the timestamp. Round to the nearest 15 minutes.
+Use Pacific time. Round to the nearest 15 minutes.
 
 ### Backstops
 
-These hooks exist to remind you, not to enforce — the expectation is that you follow the workflow above without needing the prompts:
+- `.git/hooks/pre-commit` prints a warning if the progress log isn't staged.
+- `.claude/settings.json` has a PreToolUse `prompt` hook that **blocks** `git commit` if the progress log wasn't updated this session.
 
-- **`.git/hooks/pre-commit`** prints a warning if `prd/<branch-name>.md` exists but is not staged in the current commit.
-- **`.claude/settings.json`** has a `PostToolUse` hook on `Bash(git commit *)` that injects a reminder if you commit through Claude.
+## Version bump on every release build
+
+**Every run of `./scripts/release.sh` bumps the version.** This is non-negotiable. The minimum bump is **patch** (`+0.0.1`) — there's no such thing as "rebuild without bumping."
+
+The script keeps `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` in sync. Don't edit version strings by hand.
+
+Default is **patch**; specify `--bump minor` / `--bump major` to override (or set `bump:` in the frontmatter of `scripts/.release-notes.md`).
+
+**Patch (`+0.0.1`)** — bug fixes, copy tweaks, style adjustments, single layout nudges, comment/log changes, retry-the-build builds.
+
+**Minor (`+0.1.0`)** — new features, new flows, new components, behavior changes, new dependencies, anything worth a paragraph in release notes.
+
+**Major (`+1.0.0`)** — first production release (`1.0.0`), removing/renaming a public API, fundamental rewrites, bundle-identifier changes.
+
+The new version goes into the progress-log entry heading: e.g. `## Progress Update as of 2026-05-02 18:10 PDT — v0.2.7`.
 
 ## Releasing a signed + notarized build
 
-Use **`./scripts/release.sh`** for any release build. Do not run `pnpm tauri build` directly for releases — Tauri's built-in notarization polls Apple with a short timeout that often fires before Apple responds, even when the submission is ultimately accepted. The script uses `xcrun notarytool submit --wait` (no client-side timeout) instead.
+Use **`./scripts/release.sh`** for any release. Do not run `pnpm tauri build` directly for releases — Tauri's built-in notarization polls Apple with a short timeout that often fires before Apple responds. The script uses `xcrun notarytool submit --wait` instead.
 
-What the script does:
-1. Builds `.app` via Tauri (with signing, but with `APPLE_ID`/`APPLE_PASSWORD` temporarily unset so Tauri skips its own notarization)
-2. Notarizes and staples the `.app` (`ditto` + `notarytool submit --wait` + `stapler staple`)
-3. Re-bundles the stapled `.app` into a polished `.dmg` via `create-dmg` (drag-to-Applications layout)
-4. Signs, notarizes, and staples the `.dmg`
-5. Verifies with `spctl -a -t open --context context:primary-signature -vv`
-6. Copies the result into `../visionpipe-web/public/downloads/` as both `VisionPipe-<version>.dmg` (versioned) and `VisionPipe.dmg` (latest)
+What `release.sh` does on every run:
 
-Prerequisites (verify before running):
+1. Reads optional `scripts/.release-notes.md` (gitignored; frontmatter `bump: patch|minor|major` overrides the CLI flag).
+2. Bumps version across all three files.
+3. Builds the `.app` via Tauri (`--bundles app`), then injects privacy usage descriptions into `Info.plist` via `plutil -insert` and re-signs.
+4. Notarizes + staples the `.app` (`ditto` + `notarytool submit --wait` + `stapler staple`).
+5. Builds a polished `.dmg` via `create-dmg` (drag-to-Applications layout).
+6. Signs, notarizes, and staples the `.dmg`.
+7. Verifies via `spctl -a -t open --context context:primary-signature -vv`.
+8. Copies the `.dmg` into `../visionpipe-web/public/downloads/` as both `VisionPipe-<version>.dmg` (versioned) and `VisionPipe.dmg` (stable "latest" link).
+9. Prepends a progress log entry to `prd/branch commit updates/<branch>.md`.
+10. `git add + commit "Release v<version>" + git push` in `visionpipe`.
+11. Creates a GitHub release on `VisionPipe/visionpipe` with the `.dmg` attached (notes from `.release-notes.md`).
+12. Updates the homebrew tap (`VisionPipe/homebrew-visionpipe`) — bumps version + sha256 + bundle-id zap paths, commits + pushes.
+13. `git add + commit + push` in `visionpipe-web` (with the new DMG).
+14. Clears `.release-notes.md` for next time.
+
+After this, `brew install --cask visionpipe` and the website's "Download for Mac" button serve identical, signed + notarized DMGs.
+
+### Prerequisites (verify before running)
+
 - `.env.local` contains `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_PASSWORD` (app-specific), and `APPLE_SIGNING_IDENTITY`
-- Developer ID Application cert is in keychain (`security find-identity -v -p codesigning`)
-- Apple Developer ID G2 intermediate CA is in keychain — without it, `codesign` reports "unable to build chain to self-signed root". Download from `https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer` if missing.
-- `create-dmg` is installed: `brew install create-dmg`
+- Developer ID Application cert is in the keychain (`security find-identity -v -p codesigning`)
+- Apple Developer ID G2 intermediate CA is in the keychain (download from `https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer` if `codesign` reports "unable to build chain to self-signed root")
+- `create-dmg` installed (`brew install create-dmg`)
+- `gh` CLI authenticated (`gh auth status` shows you're logged in)
 
-After the script finishes, deploy the new download:
+Currently builds Apple Silicon (`aarch64`) only. For a Universal binary, pass `--target universal-apple-darwin` to the `pnpm tauri build` line.
 
-```
-cd ../visionpipe-web
-git add public/downloads
-git commit -m "Release v<version>"
-git push
-```
+## General guidelines
 
-Currently builds Apple Silicon (`aarch64`) only. For a Universal binary (Intel + Apple Silicon), pass `--target universal-apple-darwin` to the `pnpm tauri build` line in the script.
+- Be comprehensive in progress logs — another agent should read it and fully understand branch state.
+- Include file paths and function names when referencing changes.
+- Note architectural decisions and trade-offs, not just what changed.
+- Flag known issues, tech debt, and incomplete features as "Potential concerns".
+- After committing, always tell the user you updated the progress log so they know it was done.

@@ -4,7 +4,7 @@
 # ==============================================================================
 # Every run bumps the version, builds + signs + notarizes + staples a .dmg,
 # copies it into ../visionpipe-web/public/downloads/, prepends an entry to
-# prd/initial-build-out.md, and git-commits + pushes in both projects.
+# prd/branch commit updates/<branch>.md, and git-commits + pushes in both projects.
 #
 # Usage:
 #   ./scripts/release.sh                 # defaults to patch bump
@@ -38,7 +38,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PATH="$PROJECT_ROOT/src-tauri/target/release/bundle/macos/$APP_NAME"
 WEB_DOWNLOADS="$WEB_PROJECT/$WEB_DOWNLOADS_RELATIVE"
 NOTES_FILE="$PROJECT_ROOT/scripts/.release-notes.md"
-PROGRESS_LOG="$PROJECT_ROOT/prd/initial-build-out.md"
+CURRENT_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD)
+PROGRESS_LOG="$PROJECT_ROOT/prd/branch commit updates/${CURRENT_BRANCH}.md"
 
 cd "$PROJECT_ROOT"
 
@@ -259,7 +260,7 @@ ok "Copied to web project"
 
 # --- step 8: prepend new entry to the progress log --------------------------
 
-step "Prepending entry to prd/initial-build-out.md"
+step "Prepending entry to ${PROGRESS_LOG#$PROJECT_ROOT/}"
 
 TIMESTAMP=$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M %Z')
 

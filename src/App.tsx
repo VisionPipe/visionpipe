@@ -27,6 +27,8 @@ interface PermissionStatus {
   screenRecording: boolean;
   systemEvents: boolean;
   accessibility: boolean;
+  microphone: boolean;
+  speechRecognition: boolean;
 }
 
 interface CaptureMetadata {
@@ -1052,10 +1054,12 @@ function Onboarding({ permissions, onRecheck, onDismiss }: {
   const allGranted = !!(
     permissions?.screenRecording &&
     permissions?.systemEvents &&
-    permissions?.accessibility
+    permissions?.accessibility &&
+    permissions?.microphone &&
+    permissions?.speechRecognition
   );
 
-  const openPane = async (pane: "screen_recording" | "automation" | "accessibility") => {
+  const openPane = async (pane: "screen_recording" | "automation" | "accessibility" | "microphone" | "speech_recognition") => {
     try {
       await invoke("open_settings_pane", { pane });
     } catch (e) {
@@ -1084,7 +1088,7 @@ function Onboarding({ permissions, onRecheck, onDismiss }: {
           {!allGranted ? (
             <>
               <p style={{ marginTop: 8, marginBottom: 16, color: C.textMuted, fontSize: 13 }}>
-                Enable three permissions and you'll be ready to capture.
+                Grant the permissions below and you'll be ready to capture. The first three are required; microphone + speech recognition are only needed for voice notes.
               </p>
               <PermissionRow
                 granted={!!permissions?.screenRecording}
@@ -1107,6 +1111,20 @@ function Onboarding({ permissions, onRecheck, onDismiss }: {
                 onOpen={() => openPane("accessibility")}
                 onRecheck={onRecheck}
               />
+              <PermissionRow
+                granted={!!permissions?.microphone}
+                label="Microphone"
+                description="Optional — enables voice notes attached to your captures. Click Allow when macOS asks."
+                onOpen={() => openPane("microphone")}
+                onRecheck={onRecheck}
+              />
+              <PermissionRow
+                granted={!!permissions?.speechRecognition}
+                label="Speech Recognition"
+                description="Optional — enables on-device transcription of your voice notes. Nothing leaves your Mac."
+                onOpen={() => openPane("speech_recognition")}
+                onRecheck={onRecheck}
+              />
             </>
           ) : (
             <>
@@ -1114,7 +1132,7 @@ function Onboarding({ permissions, onRecheck, onDismiss }: {
                 ✓ You're all set.
               </p>
               <p style={{ marginTop: 0, marginBottom: 16, color: C.textMuted, fontSize: 13 }}>
-                All three permissions are granted. Here's how to use Vision|Pipe:
+                All permissions are granted. Here's how to use Vision|Pipe:
               </p>
 
               <div style={{

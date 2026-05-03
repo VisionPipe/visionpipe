@@ -1,18 +1,20 @@
-# VisionPipe
+# Vision|Pipe
 
-Give your LLM eyes. `screenshot | llm` — now a reality.
+## Give your LLM eyes. `screenshot | llm` is now a reality.
 
-VisionPipe is a lightweight open source Mac and Windows utility built with [Tauri](https://tauri.app) that captures your screen and pipes it — along with rich contextual metadata — directly into any LLM. GPT-4, Gemini, Claude, OpenAI Codex, or any AI that accepts images. Capture, annotate, and paste full visual context in one keystroke.
+Vision|Pipe is a lightweight open source Mac and Windows utility that captures your screen and pipes it — along with your voice, text or visual annotations plus rich contextual metadata — directly into any LLM. GPT-4, Gemini, Claude / Claude Code, OpenAI Codex, or any AI that accepts images. Capture, annotate, and paste full visual context in one keystroke.
 
-Built for developers who think in pipes.
-
+**Built for developers who think in pipes** 
+- Free for personal use.
+- DM us on Twitter/X at [Vision_Pipe](https://x.com/vision_pipe).
+  
 ---
 
-## Why VisionPipe
+## Why Vision|Pipe
 
 **The Problem:** You're working with an AI and need to show it what's on your screen. You describe it in words. It misunderstands. You describe again. Repeat.
 
-**The Solution:** VisionPipe skips the description. Capture the screen. Annotate however feels natural — speak it, type it, or draw it. Paste the full context — image, annotation, and metadata — into your LLM in one action.
+**The Solution:** Vision|Pipe skips the description. Capture the screen. Annotate however feels natural — speak it, type it, or draw it. Paste the full context — image, annotation, and metadata — into your LLM in one action.
 
 No uploads. No integrations. No UI sprawl. Just the Unix philosophy applied to AI vision.
 
@@ -30,10 +32,10 @@ No uploads. No integrations. No UI sprawl. Just the Unix philosophy applied to A
 
 ## Multi-Modal Annotation
 
-VisionPipe captures what you *mean*, not just what you see.
+Vision|Pipe captures what you *mean*, not just what you see.
 
 ### Speak It
-Record a voice note alongside your screenshot. VisionPipe transcribes it automatically and bundles the transcript with the image.
+Record a voice note alongside your screenshot. Vision|Pipe transcribes it automatically and bundles the transcript with the image.
 
 ```
 "This dropdown is rendering below the viewport on Safari — why?"
@@ -47,7 +49,7 @@ Why is this button misaligned in dark mode?
 ```
 
 ### Draw It
-Circle the problem. Highlight the element. Draw an arrow. VisionPipe includes a lightweight markup layer so your LLM knows exactly what to focus on — no words required.
+Circle the problem. Highlight the element. Draw an arrow. Vision|Pipe includes a lightweight markup layer so your LLM knows exactly what to focus on — no words required.
 
 All three modes can be combined. The full context — image, transcript, text, and markup — is bundled into one clipboard payload.
 
@@ -55,7 +57,7 @@ All three modes can be combined. The full context — image, transcript, text, a
 
 ## Rich Metadata Capture
 
-VisionPipe does not just send a screenshot. It sends the full context of *where* and *what* the image was captured from — automatically appended to every clipboard payload. This gives your LLM the environmental context it needs to give accurate, targeted answers.
+Vision|Pipe does not just send a screenshot. It sends the full context of *where* and *what* the image was captured from — automatically appended to every clipboard payload. This gives your LLM the environmental context it needs to give accurate, targeted answers.
 
 ### Spatial & Display
 | Field | Example |
@@ -118,13 +120,13 @@ All metadata is included in the clipboard payload as structured text appended be
 
 ## Why Not Just Use a Screenshot Tool?
 
-Existing tools — Zight, Snagit, CleanShot — were designed to share screenshots **with humans.** They optimize for markup that helps a *person* understand what they're looking at.
+Existing tools — Loom, Zight, Snagit, CleanShot — were designed to share screenshots **with humans.** They optimize for markup that helps a *person* understand what they're looking at.
 
-VisionPipe is designed for a different audience: **your AI.**
+Vision|Pipe is designed for a different audience: **your AI.**
 
 The annotation and metadata are captured at the moment of intent — not after, not in a separate window. Your screenshot, context, and environment travel together in one clipboard payload.
 
-> **If Playwright gives your test suite vision, VisionPipe gives you vision.**
+> **If Playwright gives your test suite vision, Vision|Pipe gives your LLM vision while you're working with it.**
 
 | Tool | Built For | LLM-Native | Annotate at Capture | Rich Metadata |
 |---|---|---|---|---|
@@ -132,7 +134,7 @@ The annotation and metadata are captured at the moment of intent — not after, 
 | Zight / CleanShot X | Sharing with humans | No | Post-capture only | No |
 | Snagit | Documentation and tutorials | No | Post-capture only | No |
 | macOS Screenshot | General capture | No | No | No |
-| **VisionPipe** | **Piping visual context into LLMs** | **Yes** | **Yes — voice, text, or drawing** | **Yes** |
+| **Vision|Pipe** | **Piping visual context into LLMs** | **Yes** | **Yes — voice, text, or drawing** | **Yes** |
 
 ---
 
@@ -173,11 +175,11 @@ Download the installer from [Releases](https://github.com/VisionPipe/visionpipe/
 
 ## License
 
-VisionPipe is **free for personal and creative use**. A commercial license is required for business and revenue-generating applications.
+Vision|Pipe is **free for personal and creative use**. A commercial license is required for business and revenue-generating applications.
 
 ### Personal & Creative Use (Free)
 
-You can use VisionPipe at no cost for:
+You can use Vision|Pipe at no cost for:
 - Personal projects and hobby work
 - Learning and experimentation
 - Open source contributions
@@ -186,14 +188,14 @@ You can use VisionPipe at no cost for:
 
 ### Commercial Use (Paid License Required)
 
-A commercial license is required if VisionPipe is used in any workflow, product, or service that generates revenue — directly or indirectly. This includes:
+A commercial license is required if Vision|Pipe is used in any workflow, product, or service that generates revenue — directly or indirectly. This includes:
 - Use at a business or company
 - Building or maintaining revenue-generating products
 - Client work and consulting (where you bill for output)
 - Commercial websites and applications
-- Any context where VisionPipe contributes to revenue
+- Any context where Vision|Pipe contributes to revenue
 
-**To obtain a commercial license:** Contact [your email] to discuss pricing and terms.
+**To obtain a commercial license:** DM us on Twitter/X at [Vision_Pipe](https://x.com/vision_pipe) to discuss pricing and terms.
 
 ---
 

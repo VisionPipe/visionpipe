@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "visionpipe": {
+      "command": "/Users/drodio/visionpipe/target/release/visionpipe-mcp",
+      "env": {
+        "PATH": "/Users/drodio/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}

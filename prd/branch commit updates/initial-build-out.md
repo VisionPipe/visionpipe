@@ -4,6 +4,39 @@ This document tracks progress on the `initial-build-out` branch of VisionPipe. I
 
 ---
 
+## Progress Update as of 2026-05-02 18:30 PDT — merge with main (app-iteration work)
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+Merged `origin/main` into `initial-build-out`. Main had been updated separately with parallel work from an `app-iteration` branch (CLI, MCP server, voice transcription, native speech bridge, shared `crates/visionpipe-core` crate). Took the "best of both" approach: kept our onboarding card / drag handle / brand / release pipeline, additively brought in main's audio + speech modules + crates, expanded the permission set from 3 to 5 (added Microphone + Speech Recognition rows). Adopted main's progress-log path convention (`prd/branch commit updates/<branch>.md`) and merged the more-robust `PreToolUse`-blocking commit hook from main.
+
+### Detail of changes made:
+
+- **`src-tauri/src/lib.rs`**: Combined our onboarding/tray/Cmd+Shift+O/permissions setup with main's `audio` + `speech` modules. Kept our local `capture` and `metadata` modules (so the metadata battery-parser fix from v0.2.7 is preserved). Invoke handler now exposes 10 commands: `take_screenshot`, `capture_fullscreen`, `get_metadata`, `save_and_copy_image`, `permissions::check_permissions`, `permissions::open_settings_pane`, `request_microphone_access`, `request_speech_recognition`, `start_recording`, `stop_recording`.
+- **`src-tauri/src/permissions.rs`**: `PermissionStatus` struct expanded to 5 fields: `screen_recording`, `system_events`, `accessibility`, `microphone`, `speech_recognition`. Mic + speech checks delegate to `crate::speech::is_mic_authorized()` / `is_speech_authorized()` (the native ObjC bridge from main). `open_settings_pane` now handles `microphone` and `speech_recognition` panes.
+- **`src/App.tsx`**: Added two new `PermissionRow`s (Microphone, Speech Recognition) to the Onboarding component. Updated `allGranted` to require all five. Updated subtitle to clarify the first three are required and the last two are only needed for voice notes.
+- **`src-tauri/Info.plist`**: Combined all five privacy usage descriptions (NSAppleEventsUsageDescription, NSScreenCaptureUsageDescription, NSAccessibilityUsageDescription, NSMicrophoneUsageDescription, NSSpeechRecognitionUsageDescription).
+- **`src-tauri/capabilities/default.json`**: Combined our `core:window:allow-start-dragging` with main's `core:window:allow-outer-position`.
+- **`src-tauri/tauri.conf.json`**: Kept our full bundle config (icon array including 256x256, macOS providerShortName/entitlements/hardenedRuntime, version 0.2.7).
+- **`CLAUDE.md`**: Rewrote to combine our comprehensive sections (release pipeline, version bump policy, entry format) with main's progress-log path convention. Now references `prd/branch commit updates/<branch>.md` consistently.
+- **`.claude/settings.json`**: Took main's `PreToolUse` `prompt`-type hook (more robust than our `PostToolUse` echo reminder — this one BLOCKS commits if the progress log isn't updated, instead of just printing a warning).
+- **`scripts/release.sh`**: Updated `PROGRESS_LOG` path computation to use `prd/branch commit updates/<current-branch>.md` dynamically.
+- **`.git/hooks/pre-commit`**: Updated to look at the new path.
+- **New from main** (no conflicts, brought in as-is): root `Cargo.toml` workspace + `Cargo.lock`, `crates/visionpipe-core/{capture,metadata,save,window,lib}.rs`, `crates/visionpipe-mcp/`, `crates/vp-cli/`, `.claude/commands/screenshot.md`, `.claude/skills/visionpipe-capture/SKILL.md`, `.mcp.json`, `src-tauri/src/audio.rs`, `src-tauri/src/speech.rs`, `src-tauri/src/speech_bridge.m`, design spec for multi-screenshot redesign + its implementation plan.
+- **Build verification**: `cargo check` passes (warnings only, mostly dead-code about the unused Carbon FFI declarations from when we tried `AEDeterminePermissionToAutomateTarget` before falling back to osascript). `tsc --noEmit` passes clean.
+
+### Potential concerns to address:
+
+- **Voice recording UI is not yet wired up**: Main added `start_recording` / `stop_recording` Rust commands and an ObjC speech bridge, but our App.tsx still has placeholder `transcript` state and a non-functional voice button. To make voice notes actually work, the button click handler needs to invoke the new Tauri commands.
+- **The five-permission onboarding card is taller**: User flow now lists two more rows. Window size may need a bump or the rows may need to be more compact.
+- **Duplicate code: `src-tauri/src/{capture,metadata}.rs` AND `crates/visionpipe-core/src/{capture,metadata}.rs`**: We kept both because our local copies have edits (battery parser fix). The CLI/MCP tools use the shared crate. Worth a future refactor to port our edits to the shared crate and delete the duplicates.
+- **Carbon FFI declarations in `permissions.rs` are dead code**: After we moved to osascript-based System Events check, the AEDesc / AECreateDesc / AEDeterminePermissionToAutomateTarget declarations are no longer called. Cargo warns about them. Worth removing in a cleanup commit.
+- **`prd/branch commit updates/initial-build-out.md` lost main's separate historical entries** during the merge — main had its own log file at this path with entries from earlier in April. Git's auto-rename detection of our `prd/initial-build-out.md → prd/branch commit updates/initial-build-out.md` overrode main's content. Our log already includes the same April history (we backfilled it earlier in the branch's life), so net info loss is minimal.
+- **Build pipeline hasn't been tested end-to-end after the merge**: `cargo check` and `tsc` pass, but `pnpm tauri build --bundles app` against the real Cargo workspace + the audio/speech ObjC bridge could surface link-time issues. Recommend a `./scripts/release.sh` run on this branch before merging to main to surface any release-time failures.
+
+---
+
 ## Progress Update as of 2026-05-02 18:10 PDT — v0.2.7
 *(Most recent updates at top)*
 

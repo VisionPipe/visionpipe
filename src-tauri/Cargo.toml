@@ -11,9 +11,12 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
+visionpipe-core = { path = "../crates/visionpipe-core" }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+embed_plist = "1"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
@@ -21,6 +24,7 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+libc = "0.2"
 chrono = "0.4"
 
 # Audio capture

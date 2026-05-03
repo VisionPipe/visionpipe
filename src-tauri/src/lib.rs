@@ -5,9 +5,11 @@ use tauri::{
     Manager,
 };
 
+mod audio;
 mod capture;
 mod metadata;
 mod permissions;
+mod speech;
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
@@ -90,6 +92,35 @@ pb.writeObjects($.NSArray.arrayWithObject(item));"#,
     Ok(filepath)
 }
 
+/// Request microphone access via native API (shows system prompt from VisionPipe).
+#[tauri::command]
+async fn request_microphone_access() -> Result<bool, String> {
+    Ok(speech::request_mic_auth())
+}
+
+/// Request speech recognition access via native API (shows system prompt from VisionPipe).
+#[tauri::command]
+async fn request_speech_recognition() -> Result<bool, String> {
+    Ok(speech::request_speech_auth())
+}
+
+#[tauri::command]
+async fn start_recording() -> Result<(), String> {
+    audio::start_recording()
+}
+
+#[tauri::command]
+async fn stop_recording() -> Result<String, String> {
+    // Run the blocking transcription (swift subprocess) on a separate thread
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = audio::stop_recording_and_transcribe();
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|e| format!("Channel error: {}", e))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -125,14 +156,10 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Ensure window is hidden on startup
+            // Ensure window is hidden on startup. The frontend's mount-time
+            // useEffect will resize and show it for the welcome card.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
-                // Devtools disabled — opening them shifts the webview
-                // and causes capture region offsets.
-                // Uncomment temporarily if needed for debugging:
-                // #[cfg(debug_assertions)]
-                // window.open_devtools();
             }
 
             // Register global shortcuts
@@ -192,6 +219,10 @@ pub fn run() {
             save_and_copy_image,
             permissions::check_permissions,
             permissions::open_settings_pane,
+            request_microphone_access,
+            request_speech_recognition,
+            start_recording,
+            stop_recording,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

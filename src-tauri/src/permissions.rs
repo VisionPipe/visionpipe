@@ -59,6 +59,8 @@ pub struct PermissionStatus {
     pub screen_recording: bool,
     pub system_events: bool,
     pub accessibility: bool,
+    pub microphone: bool,
+    pub speech_recognition: bool,
 }
 
 fn check_screen_recording() -> bool {
@@ -128,13 +130,15 @@ fn check_system_events() -> bool {
 
 #[tauri::command]
 pub fn check_permissions() -> PermissionStatus {
-    // Debug override: when VISIONPIPE_FORCE_ONBOARDING is set, force both
+    // Debug override: when VISIONPIPE_FORCE_ONBOARDING is set, force all
     // permissions to false so the onboarding UI is visible during dev.
     if std::env::var("VISIONPIPE_FORCE_ONBOARDING").is_ok() {
         return PermissionStatus {
             screen_recording: false,
             system_events: false,
             accessibility: false,
+            microphone: false,
+            speech_recognition: false,
         };
     }
 
@@ -142,6 +146,8 @@ pub fn check_permissions() -> PermissionStatus {
         screen_recording: check_screen_recording(),
         system_events: check_system_events(),
         accessibility: check_accessibility(),
+        microphone: crate::speech::is_mic_authorized(),
+        speech_recognition: crate::speech::is_speech_authorized(),
     }
 }
 
@@ -157,6 +163,12 @@ pub fn open_settings_pane(pane: String) -> Result<(), String> {
         }
         "accessibility" => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "speech_recognition" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
         }
         _ => return Err(format!("Unknown settings pane: {}", pane)),
     };
