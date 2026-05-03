@@ -25,6 +25,7 @@ type AppMode = "idle" | "onboarding" | "selecting" | "session";
 function AppInner() {
   const { state, dispatch } = useSession();
   const [mode, setMode] = useState<AppMode>("onboarding");
+  const [captureMode, setCaptureMode] = useState<"region" | "scrolling">("region");
   const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
   const modeRef = useRef<AppMode>("onboarding");
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -124,6 +125,24 @@ function AppInner() {
         return;
       }
       console.log("[VisionPipe] start-capture received");
+      setCaptureMode("region");
+      setMode("selecting");
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // ── Listen for the scroll-capture hotkey (⌘⇧S) from Rust ──
+  // Same selection overlay as regular capture, but the SelectionOverlay
+  // calls `take_scrolling_screenshot` on confirm so the page scrolls
+  // and the frames are stitched into one tall image.
+  useEffect(() => {
+    const unlisten = listen<string>("start-scroll-capture", () => {
+      if (modeRef.current !== "idle") {
+        console.log("[VisionPipe] start-scroll-capture ignored, mode is", modeRef.current);
+        return;
+      }
+      console.log("[VisionPipe] start-scroll-capture received");
+      setCaptureMode("scrolling");
       setMode("selecting");
     });
     return () => { unlisten.then(fn => fn()); };
@@ -458,7 +477,7 @@ function AppInner() {
       />
     );
   } else if (mode === "selecting") {
-    view = <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} />;
+    view = <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} captureMode={captureMode} />;
   } else if (mode === "session" || state.session) {
     view = <SessionWindow />;
   } else {

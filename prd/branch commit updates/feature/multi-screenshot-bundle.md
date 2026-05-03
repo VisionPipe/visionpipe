@@ -4,6 +4,35 @@ This document tracks progress on the `feature/multi-screenshot-bundle` branch of
 
 ---
 
+## Progress Update as of 2026-05-03 09:45 PDT — v0.4.0
+*(Most recent updates at top)*
+
+### Summary of changes since last update
+
+New feature: **scrolling screenshot capture**. Press ⌘⇧S anywhere, drag a region (over the part of a page you want to capture), and Vision|Pipe will hide itself, send Page Down to the focused app five times, capture the same region after each scroll, and stitch all the frames vertically into one tall PNG. Result drops into the annotation card the same way a regular capture does. Bumping minor because it's a new user-facing capture mode + a new global hotkey.
+
+### Detail of changes made:
+
+- **`src-tauri/src/capture.rs`** — New `capture_scrolling_region(x, y, w, h, num_scrolls)` function. For each frame: shells out to `screencapture -R <rect>` (same Retina capture path as the existing region capture), sends `osascript … key code 121` (Page Down) between frames, sleeps 250ms for the scroll to settle. Stitches the resulting PNGs vertically using the `image` crate (`image::imageops::overlay` onto an `ImageBuffer<Rgba<u8>>`). Returns a base64 data URI of the stitched image.
+- **`src-tauri/src/lib.rs`** — New `take_scrolling_screenshot(x, y, width, height, numScrolls)` Tauri command. Defaults to 5 frames if `numScrolls < 2`. Registered in the invoke handler.
+- **`src-tauri/src/lib.rs`** — New `Cmd+Shift+S` global shortcut. Mirrors the regular capture shortcut's setup (resize window to monitor size, show, focus, always-on-top), then emits `start-scroll-capture` event. The frontend's listener flips capture mode and enters the same selection overlay.
+- **`src/App.tsx`** — Added `captureMode: "region" | "scrolling"` state. New listener for `start-scroll-capture` event sets `captureMode = "scrolling"` and `mode = "selecting"`. The existing `start-capture` listener sets `captureMode = "region"`.
+- **`src/components/SelectionOverlay.tsx`** — Now accepts a `captureMode` prop. When mode is `"scrolling"`: hint text changes to amber-on-dark explaining the flow; `completeSelection` invokes `take_scrolling_screenshot` instead of `take_screenshot`. Also added a `win.hide()` + 300ms delay before the invoke so the target app gets keyboard focus before our Page Down events start firing.
+- **`src/components/Onboarding.tsx`** — Added a third bullet to the "How to use" list mentioning the new ⌘⇧S shortcut.
+- **`src-tauri/Cargo.toml`** — Added `image = { version = "0.25", default-features = false, features = ["png"] }` for the stitching.
+
+### Potential concerns to address:
+
+- **Scroll amount = exactly one Page Down.** Most browsers Page-Down by ~90% of the viewport (slight overlap into the next view). Apps differ. Without overlap detection, the stitched image may show tiny duplication or, less commonly, gaps between frames. Acceptable for v0.3.6 MVP; future work: add overlap-detection via image diff, or scroll by exact pixel amount via accessibility APIs.
+- **Fixed 5 frames.** Doesn't auto-detect end of page. If the page is shorter than 5 viewports, frames 4-5 will repeat the bottom of the page (visually fine but redundant). If longer, we cut off. Future: stop early when the new frame is visually identical to the previous (= no scroll happened, end of page reached).
+- **Only sends Page Down to whatever's focused.** If the user's target app doesn't accept Page Down (Notion, some chat apps, custom-scroll React apps), nothing scrolls and you get 5 identical frames. Worst case = same PNG repeated 5x. User notices and falls back to regular ⌘⇧C.
+- **No keyboard cancel mid-capture.** Once the user releases the mouse on the selection, the 5 frames + scrolls happen synchronously over ~1.5s. Esc cancellation isn't wired during that window. Acceptable.
+- **No progress indicator.** The selection overlay disappears after mouseup, then ~1.5s later the annotation card appears. User sees a brief blank period. Future: show a small "Capturing scrolling screenshot…" toast.
+- **Does not yet support a UI button alternative to ⌘⇧S.** If the user is in selecting mode (regular ⌘⇧C) and wants to switch to scrolling mid-flow, they have to Esc and ⌘⇧S. A toggle button on the selection overlay would be nicer.
+
+---
+
+
 ## Progress Update as of 2026-05-03 09:37 PDT — v0.3.8
 *(Most recent updates at top)*
 

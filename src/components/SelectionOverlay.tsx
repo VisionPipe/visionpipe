@@ -5,11 +5,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 interface Props {
   onCapture: (pngBytes: Uint8Array) => void;
   onCancel: () => void;
+  /** "region" = single-frame capture (default). "scrolling" = capture
+   *  the same region across multiple Page Down scrolls and stitch
+   *  vertically into one tall PNG. */
+  captureMode?: "region" | "scrolling";
 }
 
 interface SelectionRect { startX: number; startY: number; endX: number; endY: number; }
 
-export function SelectionOverlay({ onCapture, onCancel }: Props) {
+export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }: Props) {
   const [selection, setSelection] = useState<SelectionRect | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -26,13 +30,28 @@ export function SelectionOverlay({ onCapture, onCancel }: Props) {
     const screenX = Math.round(x + pos.x / dpr);
     const screenY = Math.round(y + pos.y / dpr);
 
-    const dataUri = await invoke<string>("take_screenshot", {
-      x: screenX, y: screenY, width: Math.round(w), height: Math.round(h),
-    });
+    // Hide ourselves so the target app gets keyboard focus before we
+    // start sending Page Down events (scrolling mode) or grab the
+    // region (regular mode).
+    await win.hide();
+    await new Promise(r => setTimeout(r, 300));
+
+    let dataUri: string;
+    if (captureMode === "scrolling") {
+      dataUri = await invoke<string>("take_scrolling_screenshot", {
+        x: screenX, y: screenY,
+        width: Math.round(w), height: Math.round(h),
+        numScrolls: 5,
+      });
+    } else {
+      dataUri = await invoke<string>("take_screenshot", {
+        x: screenX, y: screenY, width: Math.round(w), height: Math.round(h),
+      });
+    }
     const base64 = dataUri.split(",")[1];
     const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
     onCapture(bytes);
-  }, [onCapture]);
+  }, [onCapture, captureMode]);
 
   const captureFullscreen = useCallback(async () => {
     const dataUri = await invoke<string>("capture_fullscreen");
@@ -80,10 +99,14 @@ export function SelectionOverlay({ onCapture, onCancel }: Props) {
       )}
       <div style={{
         position: "absolute", top: 24, left: "50%", transform: "translateX(-50%)",
-        background: "rgba(20, 30, 24, 0.85)", color: "#cfd8d2",
+        background: captureMode === "scrolling" ? "rgba(212, 136, 42, 0.92)" : "rgba(20, 30, 24, 0.85)",
+        color: captureMode === "scrolling" ? "#1a2a20" : "#cfd8d2",
         padding: "8px 20px", borderRadius: 999, fontSize: 14, fontFamily: "Verdana",
+        fontWeight: captureMode === "scrolling" ? 700 : 400,
       }}>
-        Drag a region · Enter for fullscreen · Esc to cancel
+        {captureMode === "scrolling"
+          ? "Scrolling capture: drag the region (the page will scroll & stitch automatically) · Esc to cancel"
+          : "Drag a region · Enter for fullscreen · Esc to cancel"}
       </div>
     </div>
   );

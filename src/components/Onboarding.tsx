@@ -166,6 +166,7 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
               <ul style={{ margin: 0, paddingLeft: 24, color: C.cream, fontSize: 16, lineHeight: 2.2 }}>
                 <li>Press <KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>C</KbdKey> anywhere to start a capture.</li>
                 <li>Drag to select a region, or press <KbdKey>Enter</KbdKey> for a fullscreen capture.</li>
+                <li>Or press <KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>S</KbdKey> for a <strong style={{ color: C.amber }}>scrolling capture</strong> — drag a region and Vision|Pipe scrolls the page and stitches the frames into one tall image.</li>
                 <li>Press <KbdKey>Esc</KbdKey> to cancel.</li>
                 <li>
                   Add an annotation, then click{" "}
