@@ -1,0 +1,56 @@
+{
+  "id": "2026-05-02_14-23-07",
+  "folder": "/Users/test/Pictures/VisionPipe/session-2026-05-02_14-23-07",
+  "createdAt": "2026-05-02T14:23:07-07:00",
+  "updatedAt": "2026-05-02T14:27:25-07:00",
+  "audioFile": "audio-master.webm",
+  "viewMode": "interleaved",
+  "screenshots": [
+    {
+      "seq": 1,
+      "canonicalName": "VisionPipe-001-2026-05-02_14-23-07-Chrome-github.com-anthropics-claude-code-issues-2841",
+      "capturedAt": "2026-05-02T14:23:07-07:00",
+      "audioOffset": { "start": 0, "end": 47.2 },
+      "caption": "Login button missing in dark mode — this is the bug I want you to fix",
+      "transcriptSegment": "So the issue is the login button just doesn't render in dark mode, you can see in the screenshot that the area where it should be is just empty. This started happening after we switched to the new theme tokens last week.",
+      "reRecordedAudio": null,
+      "offline": false,
+      "metadata": {
+        "app": "Google Chrome",
+        "window": "Issue #2841 · anthropics/claude-code",
+        "resolution": "2560x1600",
+        "scale": "2x",
+        "os": "macOS 15.3.2",
+        "osBuild": "24D81",
+        "timestamp": "2026-05-02T21:23:07Z",
+        "hostname": "host", "username": "user", "locale": "en-US", "timezone": "PDT",
+        "displayCount": 1, "primaryDisplay": "Built-in", "colorSpace": "Display P3",
+        "cpu": "Apple M2", "memoryGb": "16", "darkMode": true, "battery": "80%",
+        "uptime": "1d", "activeUrl": "https://github.com/anthropics/claude-code/issues/2841",
+        "captureWidth": 2400, "captureHeight": 1500, "captureMethod": "Region", "imageSizeKb": 384
+      }
+    },
+    {
+      "seq": 2,
+      "canonicalName": "VisionPipe-002-2026-05-02_14-23-45-VSCode-visionpipe-src-App.tsx",
+      "capturedAt": "2026-05-02T14:23:45-07:00",
+      "audioOffset": { "start": 47.2, "end": 198.0 },
+      "caption": "This is the handler — line 234 looks suspicious",
+      "transcriptSegment": "Here's the handler in App.tsx, line 234, this is where I think the issue is. The conditional check on theme is wrong — it's looking at `isDarkMode` but we renamed that prop to `theme === \"dark\"` two commits ago.",
+      "reRecordedAudio": null,
+      "offline": false,
+      "metadata": {
+        "app": "Visual Studio Code",
+        "window": "visionpipe — App.tsx",
+        "resolution": "2560x1600", "scale": "2x", "os": "macOS 15.3.2",
+        "osBuild": "24D81", "timestamp": "2026-05-02T21:23:45Z",
+        "hostname": "host", "username": "user", "locale": "en-US", "timezone": "PDT",
+        "displayCount": 1, "primaryDisplay": "Built-in", "colorSpace": "Display P3",
+        "cpu": "Apple M2", "memoryGb": "16", "darkMode": true, "battery": "80%",
+        "uptime": "1d", "activeUrl": "",
+        "captureWidth": 2400, "captureHeight": 1500, "captureMethod": "Region", "imageSizeKb": 412
+      }
+    }
+  ],
+  "closingNarration": "Can you take a look and fix it? I think the conditional on line 234 is the issue but I'd like you to verify and also check if there are other places where the old prop name is referenced."
+}

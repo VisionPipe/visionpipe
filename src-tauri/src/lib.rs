@@ -1,15 +1,335 @@
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
-    Emitter,
-    Manager,
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager,
 };
 
 mod audio;
 mod capture;
+mod hotkey_config;
+mod install_token;
 mod metadata;
 mod permissions;
+mod session;
 mod speech;
+
+/// Shared state mapping tray-menu ID `session_<N>` → session folder path on
+/// disk. Updated whenever we rebuild the tray menu (on launch + after each
+/// session change). Lock held briefly during click dispatch. Renamed from
+/// RecentCapturesState (which held PNG paths) so the tray now shows recent
+/// SESSIONS (bundles) instead of individual screenshots — matches the
+/// in-app History view.
+struct RecentSessionsState(Mutex<Vec<String>>);
+
+/// Stashed metadata captured at hotkey-press time (BEFORE Vision|Pipe
+/// steals focus). The frontend's `get_metadata` Tauri command reads + takes
+/// from this; if empty, falls back to live collection (which would return
+/// `app: "visionpipe"` since by then VP is frontmost). One-shot per
+/// hotkey press — consumed by the next `get_metadata` call.
+struct StashedMetadata(Mutex<Option<metadata::CaptureMetadata>>);
+
+/// Stash the current frontmost-app metadata. Called from every capture
+/// trigger (Cmd+Shift+C, Cmd+Shift+S, tray "Take Capture", tray "Take
+/// Scrolling Capture") BEFORE any window operations. The collection is
+/// fast (~5-30ms of osascript + system_profiler calls).
+fn stash_current_metadata(app: &AppHandle) {
+    let snapshot = metadata::collect_metadata();
+    if let Some(state) = app.try_state::<StashedMetadata>() {
+        if let Ok(mut slot) = state.0.lock() {
+            *slot = Some(snapshot);
+        }
+    }
+}
+
+/// Summary of a single VisionPipe session, used by both the tray menu
+/// and the in-app History Hub. Built lazily from the session folder
+/// contents (transcript.json if present; otherwise filesystem-derived).
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub folder: String,
+    /// ISO-8601 UTC, fallback to folder mtime if transcript.json is missing.
+    pub created_at: String,
+    /// Friendly label like "Today at 9:42 AM" — used in tray menus.
+    pub label: String,
+    pub screenshot_count: usize,
+    /// First non-empty caption from the session, if any. Used as the
+    /// row's primary identifying text in the history view.
+    pub first_caption: Option<String>,
+    /// First ~120 chars of the first non-empty transcriptSegment.
+    /// Used as a row preview. None if no transcripts.
+    pub transcript_snippet: Option<String>,
+    /// Absolute paths to the first 3 .png files in the folder, used
+    /// for thumbnail icons in the history row.
+    pub thumbnail_paths: Vec<String>,
+    /// Path to transcript.md if it exists (i.e. user has done Copy & Send
+    /// on this session at least once). Drag-source for history rows.
+    pub transcript_md_path: Option<String>,
+}
+
+/// Read all `session-*` directories under ~/Pictures/VisionPipe/, parse
+/// metadata from each, and return up to `limit` sessions sorted by
+/// folder mtime descending (most recent first).
+fn list_recent_sessions(limit: usize) -> Vec<SessionSummary> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let dir = format!("{}/Pictures/VisionPipe", home);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut folders: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if !p.is_dir() {
+                return None;
+            }
+            let name = p.file_name()?.to_str()?.to_string();
+            if !name.starts_with("session-") {
+                return None;
+            }
+            let mtime = e.metadata().ok().and_then(|m| m.modified().ok())?;
+            Some((mtime, p))
+        })
+        .collect();
+    folders.sort_by(|a, b| b.0.cmp(&a.0));
+    folders.truncate(limit);
+
+    folders
+        .into_iter()
+        .map(|(mtime, folder)| build_session_summary(&folder, mtime))
+        .collect()
+}
+
+fn build_session_summary(folder: &std::path::Path, mtime: std::time::SystemTime) -> SessionSummary {
+    let folder_str = folder.to_string_lossy().to_string();
+    let id = folder.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("session")
+        .to_string();
+
+    // Try transcript.json first for accurate metadata.
+    let transcript_json = folder.join("transcript.json");
+    let parsed: Option<serde_json::Value> = std::fs::read_to_string(&transcript_json)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+
+    let dt: chrono::DateTime<chrono::Local> = mtime.into();
+    let now = chrono::Local::now();
+    let same_day = dt.date_naive() == now.date_naive();
+    let time_part = dt.format("%-I:%M %p").to_string();
+    let label = if same_day {
+        format!("Today at {}", time_part)
+    } else {
+        format!("{} at {}", dt.format("%b %-d").to_string(), time_part)
+    };
+
+    let mut screenshot_count = 0usize;
+    let mut first_caption: Option<String> = None;
+    let mut transcript_snippet: Option<String> = None;
+    let mut created_at = chrono::DateTime::<chrono::Utc>::from(mtime).to_rfc3339();
+
+    if let Some(p) = &parsed {
+        if let Some(s) = p.get("createdAt").and_then(|v| v.as_str()) {
+            created_at = s.to_string();
+        }
+        if let Some(arr) = p.get("screenshots").and_then(|v| v.as_array()) {
+            screenshot_count = arr.len();
+            for s in arr {
+                if first_caption.is_none() {
+                    if let Some(c) = s.get("caption").and_then(|v| v.as_str()) {
+                        if !c.is_empty() {
+                            first_caption = Some(c.to_string());
+                        }
+                    }
+                }
+                if transcript_snippet.is_none() {
+                    if let Some(t) = s.get("transcriptSegment").and_then(|v| v.as_str()) {
+                        if !t.is_empty() {
+                            let trimmed: String = t.chars().take(120).collect();
+                            transcript_snippet = Some(trimmed);
+                        }
+                    }
+                }
+                if first_caption.is_some() && transcript_snippet.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Thumbnails: first 3 PNGs in the folder, sorted by name (which
+    // mirrors capture order since canonicalNames start with seq).
+    let mut pngs: Vec<std::path::PathBuf> = std::fs::read_dir(folder)
+        .ok()
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("png"))
+                .collect()
+        })
+        .unwrap_or_default();
+    pngs.sort();
+    let thumbnail_paths: Vec<String> = pngs
+        .into_iter()
+        .take(3)
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    // If no transcript.json, count screenshots from PNG files.
+    if parsed.is_none() {
+        screenshot_count = thumbnail_paths.len(); // approximate
+    }
+
+    let transcript_md = folder.join("transcript.md");
+    let transcript_md_path = if transcript_md.is_file() {
+        Some(transcript_md.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    SessionSummary {
+        id,
+        folder: folder_str,
+        created_at,
+        label,
+        screenshot_count,
+        first_caption,
+        transcript_snippet,
+        thumbnail_paths,
+        transcript_md_path,
+    }
+}
+
+/// Return a concise tray-menu label for a session: time + count + caption.
+fn format_session_menu_label(s: &SessionSummary) -> String {
+    let count_part = if s.screenshot_count == 1 {
+        "1 screenshot".to_string()
+    } else {
+        format!("{} screenshots", s.screenshot_count)
+    };
+    let caption_part = s.first_caption.as_ref()
+        .map(|c| {
+            let trimmed: String = c.chars().take(40).collect();
+            format!(" — \"{}\"", trimmed)
+        })
+        .unwrap_or_default();
+    format!("{} · {}{}", s.label, count_part, caption_part)
+}
+
+/// Tauri command: return up to `limit` recent session summaries for the
+/// frontend History Hub.
+#[tauri::command]
+async fn list_recent_sessions_cmd(limit: Option<usize>) -> Result<Vec<SessionSummary>, String> {
+    Ok(list_recent_sessions(limit.unwrap_or(50)))
+}
+
+/// Reveal a file in Finder by selecting it (`open -R <path>`).
+/// Used by tray-menu session click + history row "Show in Finder" actions.
+#[tauri::command]
+async fn reveal_in_finder(path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .args(["-R", &path])
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Refresh the tray menu's recent-sessions list. Called by the frontend
+/// after END_SESSION so a just-ended bundle appears in the tray right-click
+/// menu without an app restart.
+#[tauri::command]
+async fn refresh_tray(app: AppHandle) -> Result<(), String> {
+    refresh_tray_menu(&app);
+    Ok(())
+}
+
+/// Build the tray menu from the current recent-sessions list. Each session
+/// becomes a menu item with ID `session_<idx>`; the click handler resolves
+/// the index against `RecentSessionsState` to get the folder path, then
+/// reveals it in Finder. Index-based addressing keeps the click handler
+/// trivial (no string parsing of session IDs).
+fn build_tray_menu(
+    app: &AppHandle,
+    recents: &[SessionSummary],
+) -> Result<Menu<tauri::Wry>, tauri::Error> {
+    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+
+    if recents.is_empty() {
+        let label = MenuItem::with_id(
+            app,
+            "no_recents",
+            "No recent sessions yet",
+            false,
+            None::<&str>,
+        )?;
+        items.push(Box::new(label));
+    } else {
+        let header = MenuItem::with_id(app, "recents_header", "Recent sessions", false, None::<&str>)?;
+        items.push(Box::new(header));
+        for (i, s) in recents.iter().enumerate() {
+            let id = format!("session_{}", i);
+            let label = format_session_menu_label(s);
+            let mi = MenuItem::with_id(app, &id, format!("  {}", label), true, None::<&str>)?;
+            items.push(Box::new(mi));
+        }
+    }
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    items.push(Box::new(MenuItem::with_id(
+        app, "take_capture", "Take Capture (⌘⇧C)", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "take_scrolling_capture", "Take Scrolling Capture (⌘⇧S)", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "open_captures_folder", "Open Captures Folder…", true, None::<&str>,
+    )?));
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    items.push(Box::new(MenuItem::with_id(
+        app, "show_onboarding", "Show Onboarding…", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "reveal_logs", "Reveal Logs in Finder…", true, None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app, "save_diagnostic_bundle", "Save Diagnostic Bundle…", true, None::<&str>,
+    )?));
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+    items.push(Box::new(PredefinedMenuItem::quit(app, Some("Quit Vision|Pipe"))?));
+
+    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        items.iter().map(|b| b.as_ref()).collect();
+    Menu::with_items(app, &item_refs)
+}
+
+/// Rebuild the tray menu from the current filesystem state and replace
+/// the tray's menu in-place. Also updates the shared `RecentSessionsState`
+/// so click dispatch uses the same folder list the menu was built from.
+/// Cap at 10 sessions in the tray (per user request) — full list is in the
+/// in-app History view.
+fn refresh_tray_menu(app: &AppHandle) {
+    let recents = list_recent_sessions(10);
+
+    if let Some(state) = app.try_state::<RecentSessionsState>() {
+        if let Ok(mut paths) = state.0.lock() {
+            *paths = recents.iter().map(|s| s.folder.clone()).collect();
+        }
+    }
+
+    if let Ok(menu) = build_tray_menu(app, &recents) {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
 
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
@@ -23,15 +343,123 @@ async fn capture_fullscreen() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Capture a scrolling screenshot of the same region across `num_scrolls`
+/// frames, sending Page Down between each, then stitch them vertically
+/// into a single PNG. Returns a base64 data URI of the stitched image.
+/// Defaults to 5 frames if `num_scrolls` is 0 or 1.
 #[tauri::command]
-async fn get_metadata() -> Result<metadata::CaptureMetadata, String> {
-    Ok(metadata::collect_metadata())
+async fn take_scrolling_screenshot(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    num_scrolls: u32,
+) -> Result<String, String> {
+    let n = if num_scrolls < 2 { 5 } else { num_scrolls };
+    capture::capture_scrolling_region(x, y, width, height, n)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_metadata(state: tauri::State<'_, StashedMetadata>) -> Result<metadata::CaptureMetadata, String> {
+    // Take (consume) the stashed metadata if present so the next capture
+    // gets a fresh snapshot. If nothing is stashed (e.g. capture flow
+    // wasn't triggered through one of our handlers), fall back to live
+    // collection — which will return Vision|Pipe as the active app since
+    // VP is now frontmost. That's the bug we were trying to fix; the
+    // stash is the primary path.
+    let stashed = state.0.lock().ok().and_then(|mut s| s.take());
+    Ok(stashed.unwrap_or_else(metadata::collect_metadata))
+}
+
+/// Hide Vision|Pipe (so macOS auto-restores focus to the previously
+/// frontmost app), wait briefly for that focus shift, then capture the
+/// frontmost-app metadata into the stash. Used by the in-app
+/// "+ Take next screenshot" path: when the user clicks the button,
+/// VP is currently frontmost, so we need to step out of the way first.
+/// The frontend awaits this, then proceeds with the resize + selection
+/// overlay. ~250ms latency is imperceptible.
+#[tauri::command]
+async fn prepare_in_app_capture(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    // Give macOS a moment to refocus the previous app.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    stash_current_metadata(&app);
+    Ok(())
+}
+
+/// Write the markdown body to `<folder>/transcript.md` AND copy that
+/// file's path onto the macOS NSPasteboard as BOTH a string (the body
+/// text, for paste-into-text-editor) AND a file URL (for paste-into-Finder
+/// or drag-into-Claude-Code-as-file). Mirrors the dual-representation
+/// pattern in `save_and_copy_image`. Returns the absolute path to the
+/// written transcript.md.
+#[tauri::command]
+async fn save_and_copy_markdown(folder: String, markdown: String) -> Result<String, String> {
+    use std::fs;
+    use std::process::Command;
+
+    let path = std::path::PathBuf::from(&folder).join("transcript.md");
+    fs::write(&path, &markdown).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    let path_str = path.to_string_lossy().to_string();
+
+    // Build a JXA script that writes a single NSPasteboardItem with both
+    // representations. Inline the markdown body as a JS-escaped string
+    // (newlines + double-quotes need escaping). The file URL representation
+    // points at the just-written transcript.md so paste-into-Finder yields
+    // the file (not a copy of the text).
+    let escaped_body = markdown
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    let escaped_path = path_str.replace('\\', "\\\\").replace('"', "\\\"");
+
+    let jxa_script = format!(
+        r#"ObjC.import('AppKit');
+ObjC.import('Foundation');
+var path = "{}";
+var body = "{}";
+var url = $.NSURL.fileURLWithPath(path);
+
+var item = $.NSPasteboardItem.alloc.init;
+item.setStringForType(body, $.NSPasteboardTypeString);
+item.setStringForType(url.absoluteString.js, $.NSPasteboardTypeFileURL);
+
+var pb = $.NSPasteboard.generalPasteboard;
+pb.clearContents;
+pb.writeObjects($.NSArray.arrayWithObject(item));"#,
+        escaped_path, escaped_body
+    );
+
+    let output = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &jxa_script])
+        .output()
+        .map_err(|e| format!("osascript spawn failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[VisionPipe] save_and_copy_markdown JXA failed: {}", stderr);
+        // Fallback: at least put the text on the clipboard via pbcopy so
+        // Copy & Send isn't completely broken if NSPasteboard fails.
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '%s' \"$1\" | pbcopy", ).as_str())
+            .arg("_")
+            .arg(&markdown)
+            .status();
+        return Err(format!("clipboard write failed: {}", stderr));
+    }
+
+    Ok(path_str)
 }
 
 /// Save PNG bytes to ~/Pictures/VisionPipe/ and set clipboard to the file
 /// so it can be pasted into Finder, desktop, and image-accepting apps.
 #[tauri::command]
-async fn save_and_copy_image(png_bytes: Vec<u8>) -> Result<String, String> {
+async fn save_and_copy_image(app: AppHandle, png_bytes: Vec<u8>) -> Result<String, String> {
     use std::fs;
     use std::process::Command;
 
@@ -89,7 +517,99 @@ pb.writeObjects($.NSArray.arrayWithObject(item));"#,
             .status();
     }
 
+    // Refresh the tray menu so the new capture appears in "Recent captures".
+    refresh_tray_menu(&app);
+
     Ok(filepath)
+}
+
+/// Reveal the active log file in Finder. The Tauri log plugin writes to
+/// `~/Library/Logs/com.visionpipe.desktop/visionpipe.log` with daily rotation.
+#[tauri::command]
+fn reveal_logs_in_finder() -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let log_dir = format!("{}/Library/Logs/com.visionpipe.desktop", home);
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("open")
+        .arg(&log_dir)
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Bundle the current logs + version + macOS system info into a zip in
+/// ~/Downloads, then reveal it in Finder. Nothing leaves the user's Mac
+/// — the zip is purely for them to drag into a chat or email when they
+/// want to share diagnostic info.
+#[tauri::command]
+fn save_diagnostic_bundle() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let zip_basename = format!("visionpipe-diagnostic-{}", timestamp);
+    let zip_path = format!("{}/Downloads/{}.zip", home, zip_basename);
+
+    // Build the bundle in a /tmp staging dir so the zip's internal paths
+    // are clean (just `version.txt`, `system.txt`, `logs/...`).
+    let staging = format!("/tmp/{}", zip_basename);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+
+    // Copy log directory if it exists.
+    let log_dir = format!("{}/Library/Logs/com.visionpipe.desktop", home);
+    if std::fs::metadata(&log_dir).is_ok() {
+        let _ = std::process::Command::new("cp")
+            .args(["-R", &log_dir, &format!("{}/logs", staging)])
+            .status();
+    }
+
+    // version.txt
+    let version_txt = format!(
+        "Vision|Pipe v{}\nbuilt: {}\n",
+        env!("CARGO_PKG_VERSION"),
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z"),
+    );
+    let _ = std::fs::write(format!("{}/version.txt", staging), version_txt);
+
+    // system.txt
+    let sw_vers = std::process::Command::new("sw_vers")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let model = std::process::Command::new("sysctl")
+        .args(["-n", "hw.model"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let cpu = std::process::Command::new("sysctl")
+        .args(["-n", "machdep.cpu.brand_string"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let system_txt = format!(
+        "=== sw_vers ===\n{}\n=== Model ===\n{}\n=== CPU ===\n{}\n",
+        sw_vers, model, cpu
+    );
+    let _ = std::fs::write(format!("{}/system.txt", staging), system_txt);
+
+    // Zip up the staging dir (cd into /tmp so zip paths are relative).
+    let status = std::process::Command::new("zip")
+        .current_dir("/tmp")
+        .args(["-rq", &zip_path, &zip_basename])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("zip command failed".into());
+    }
+
+    // Cleanup staging.
+    let _ = std::fs::remove_dir_all(&staging);
+
+    // Reveal the zip in Finder so the user can drag it into a chat.
+    let _ = std::process::Command::new("open")
+        .args(["-R", &zip_path])
+        .status();
+
+    log::info!("Diagnostic bundle saved to {}", zip_path);
+    Ok(zip_path)
 }
 
 /// Request microphone access via native API (shows system prompt from VisionPipe).
@@ -121,9 +641,80 @@ async fn stop_recording() -> Result<String, String> {
         .map_err(|e| format!("Channel error: {}", e))?
 }
 
+#[tauri::command]
+async fn create_session_folder(session_id: String) -> Result<String, String> {
+    session::create_session_folder(&session_id)
+}
+
+#[tauri::command]
+async fn write_session_file(folder: String, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+    session::write_session_file(&folder, &filename, bytes)
+}
+
+/// Read raw bytes from <session_folder>/<filename>. Used by HistoryHub to
+/// pull transcript.json or transcript.md back into the UI for re-rendering
+/// or copying. Returned as Vec<u8> rather than String so binary files work
+/// too (callers that want text decode it on the JS side).
+#[tauri::command]
+async fn read_session_file(folder: String, filename: String) -> Result<Vec<u8>, String> {
+    let path = std::path::PathBuf::from(&folder).join(&filename);
+    std::fs::read(&path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))
+}
+
+#[tauri::command]
+async fn move_to_deleted(folder: String, filename: String) -> Result<(), String> {
+    session::move_to_deleted(&folder, &filename)
+}
+
+#[tauri::command]
+async fn save_install_token(token: String) -> Result<(), String> {
+    install_token::save_token(&token)
+}
+
+#[tauri::command]
+async fn load_install_token() -> Result<Option<String>, String> {
+    install_token::load_token()
+}
+
+#[tauri::command]
+async fn load_hotkey_config() -> hotkey_config::HotkeyConfig {
+    hotkey_config::load()
+}
+
+#[tauri::command]
+async fn save_hotkey_config(cfg: hotkey_config::HotkeyConfig) -> Result<(), String> {
+    hotkey_config::save(&cfg)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Default log level: info. Override with VISIONPIPE_LOG_LEVEL=debug
+    // for verbose dev / diagnostic output. The `log` plugin writes to:
+    //   - stdout (visible in Console.app via `log show --process visionpipe`)
+    //   - file: ~/Library/Logs/com.visionpipe.desktop/visionpipe.log (rotated daily)
+    //   - webview: forwards Rust log lines into JS console (ignored in prod webview but visible during dev)
+    let log_level = match std::env::var("VISIONPIPE_LOG_LEVEL").ok().as_deref() {
+        Some("trace") => log::LevelFilter::Trace,
+        Some("debug") => log::LevelFilter::Debug,
+        Some("warn") => log::LevelFilter::Warn,
+        Some("error") => log::LevelFilter::Error,
+        _ => log::LevelFilter::Info,
+    };
+    let log_plugin = tauri_plugin_log::Builder::default()
+        .targets([
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                file_name: Some("visionpipe".to_string()),
+            }),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+        ])
+        .level(log_level)
+        .max_file_size(5_000_000) // 5 MB rotation
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+        .build();
+
     tauri::Builder::default()
+        .plugin(log_plugin)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -137,21 +728,120 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let separator = PredefinedMenuItem::separator(app)?;
-            let quit = PredefinedMenuItem::quit(app, Some("Quit VisionPipe"))?;
-            let menu = Menu::with_items(app, &[&show_onboarding, &separator, &quit])?;
+            let _ = show_onboarding; // kept for type elaboration; real menu is built below
 
-            let _tray = TrayIconBuilder::new()
+            // Initial tray-menu build with current filesystem state, plus
+            // shared mutex of recent session folder paths so click dispatch
+            // can resolve `session_<N>` IDs back to a folder to reveal.
+            app.manage(RecentSessionsState(Mutex::new(Vec::new())));
+            // Stashed-metadata slot. Populated by every capture-trigger
+            // path (hotkey, tray, in-app "+") BEFORE VP takes focus.
+            // Drained by the next get_metadata invocation.
+            app.manage(StashedMetadata(Mutex::new(None)));
+            let initial_recents = list_recent_sessions(10);
+            if let Some(state) = app.try_state::<RecentSessionsState>() {
+                if let Ok(mut paths) = state.0.lock() {
+                    *paths = initial_recents.iter().map(|s| s.folder.clone()).collect();
+                }
+            }
+            let menu = build_tray_menu(app.handle(), &initial_recents)?;
+
+            let _tray = TrayIconBuilder::with_id("main")
                 .tooltip("VisionPipe")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, event| {
-                    if event.id.as_ref() == "show_onboarding" {
+                // v0.6.1: left-click brings the main window forward (showing
+                // HistoryHub if no session active) rather than opening the
+                // native NSMenu. The previous behavior — left-click → text
+                // menu listing recent sessions — felt empty: NSMenu can't
+                // show thumbnails or per-row Copy/Folder buttons, so the
+                // user couldn't actually DO anything from the dropdown
+                // beyond opening the session folder. Right-click still
+                // shows the native menu for the static actions
+                // (Take Capture, Quit, etc.) for power users.
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        // Refresh the menu list so right-click reflects any
+                        // sessions added since startup. Cheap (~ms) since
+                        // it's just a directory walk + metadata stats.
+                        refresh_tray_menu(app);
                         if let Some(window) = app.get_webview_window("main") {
+                            // Bring forward + focus. The window already
+                            // renders the right view based on session state
+                            // (HistoryHub when no session, SessionWindow
+                            // otherwise) — see App.tsx view routing.
+                            let _ = window.unminimize();
                             let _ = window.show();
                             let _ = window.set_focus();
-                            let _ = window.emit("show-onboarding", ());
                         }
+                    }
+                })
+                .on_menu_event(|app, event| {
+                    let id = event.id.as_ref();
+                    match id {
+                        "show_onboarding" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.emit("show-onboarding", ());
+                            }
+                        }
+                        "take_capture" => {
+                            // Capture metadata BEFORE Vision|Pipe steals focus from the tray dismiss.
+                            // The tray menu was open over the user's previous app; closing it
+                            // restores focus there. By the time get_metadata runs in JS, VP
+                            // would be frontmost and would self-report as the active app.
+                            stash_current_metadata(app);
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.emit("start-capture", "tray");
+                            }
+                        }
+                        "take_scrolling_capture" => {
+                            stash_current_metadata(app);
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.emit("start-scroll-capture", "tray");
+                            }
+                        }
+                        "open_captures_folder" => {
+                            if let Ok(home) = std::env::var("HOME") {
+                                let dir = format!("{}/Pictures/VisionPipe", home);
+                                let _ = std::fs::create_dir_all(&dir);
+                                let _ = std::process::Command::new("open").arg(&dir).status();
+                            }
+                        }
+                        "reveal_logs" => {
+                            let _ = reveal_logs_in_finder();
+                        }
+                        "save_diagnostic_bundle" => {
+                            match save_diagnostic_bundle() {
+                                Ok(path) => log::info!("Diagnostic bundle: {}", path),
+                                Err(e) => log::error!("Diagnostic bundle failed: {}", e),
+                            }
+                        }
+                        _ if id.starts_with("session_") => {
+                            // session_<N>: open Nth session folder in Finder
+                            // (lets user grab PNGs / transcript.md by drag).
+                            if let Some(rest) = id.strip_prefix("session_") {
+                                if let Ok(idx) = rest.parse::<usize>() {
+                                    if let Some(state) = app.try_state::<RecentSessionsState>() {
+                                        if let Ok(paths) = state.0.lock() {
+                                            if let Some(folder) = paths.get(idx) {
+                                                let _ = std::process::Command::new("open")
+                                                    .arg(folder)
+                                                    .status();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;
@@ -178,11 +868,18 @@ pub fn run() {
                 }
             })?;
 
-            // Cmd+Shift+C — start capture
+            // Configurable global capture shortcut (default Cmd+Shift+C)
+            let cfg = hotkey_config::load();
+            let global_combo = cfg.take_next_screenshot.clone();
             let app_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+C", move |_app, _shortcut, event| {
+            app.global_shortcut().on_shortcut(global_combo.as_str(), move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
                     eprintln!("[VisionPipe] Shortcut triggered!");
+                    // CRITICAL: capture metadata BEFORE we show + focus the
+                    // window. Once VP has focus, `metadata::collect_metadata()`
+                    // would report VP itself as the active app — yielding the
+                    // "App: visionpipe" garbage in the markdown output.
+                    stash_current_metadata(&app_handle);
                     if let Some(window) = app_handle.get_webview_window("main") {
                         // Size window to fill the screen
                         if let Ok(Some(monitor)) = window.current_monitor() {
@@ -210,19 +907,69 @@ pub fn run() {
                 }
             })?;
 
+            // Cmd+Shift+S — start a SCROLLING capture: same selection
+            // overlay, but on confirm the frontend calls
+            // `take_scrolling_screenshot` instead of `take_screenshot`.
+            let scroll_handle = app.handle().clone();
+            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+S", move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    eprintln!("[VisionPipe] Scroll-capture shortcut triggered");
+                    // Same as the regular hotkey: capture metadata before
+                    // Vision|Pipe steals focus.
+                    stash_current_metadata(&scroll_handle);
+                    if let Some(window) = scroll_handle.get_webview_window("main") {
+                        if let Ok(Some(monitor)) = window.current_monitor() {
+                            let size = monitor.size();
+                            let pos = monitor.position();
+                            let _ = window.set_position(tauri::Position::Physical(
+                                tauri::PhysicalPosition::new(pos.x, pos.y)
+                            ));
+                            let _ = window.set_size(tauri::Size::Physical(
+                                tauri::PhysicalSize::new(size.width, size.height)
+                            ));
+                        }
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.set_always_on_top(true);
+                        let handle = window.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                            eprintln!("[VisionPipe] Emitting start-scroll-capture");
+                            let _ = handle.emit("start-scroll-capture", "ready");
+                        });
+                    }
+                }
+            })?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             take_screenshot,
+            take_scrolling_screenshot,
             capture_fullscreen,
             get_metadata,
+            prepare_in_app_capture,
             save_and_copy_image,
+            save_and_copy_markdown,
             permissions::check_permissions,
             permissions::open_settings_pane,
+            reveal_logs_in_finder,
+            save_diagnostic_bundle,
             request_microphone_access,
             request_speech_recognition,
             start_recording,
             stop_recording,
+            create_session_folder,
+            write_session_file,
+            move_to_deleted,
+            save_install_token,
+            load_install_token,
+            load_hotkey_config,
+            save_hotkey_config,
+            list_recent_sessions_cmd,
+            reveal_in_finder,
+            read_session_file,
+            refresh_tray,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

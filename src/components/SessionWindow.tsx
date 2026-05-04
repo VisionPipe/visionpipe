@@ -1,0 +1,189 @@
+import { useState, useEffect, useCallback } from "react";
+import { Header } from "./Header";
+import { Footer } from "./Footer";
+import { InterleavedView } from "./InterleavedView";
+import { SplitView } from "./SplitView";
+import { Lightbox } from "./Lightbox";
+import { ReRecordModal } from "./ReRecordModal";
+import { SettingsPanel } from "./SettingsPanel";
+import { useSession } from "../state/session-context";
+import { useMic } from "../state/mic-context";
+import { renderMarkdown } from "../lib/markdown-renderer";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { invoke } from "@tauri-apps/api/core";
+
+export function SessionWindow() {
+  const { state, dispatch } = useSession();
+  const mic = useMic();
+  const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
+  const [rerecordSeq, setRerecordSeq] = useState<number | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Toast state for Copy & Send feedback (auto-dismisses after 3s).
+  // Was added because the action used to silently swallow failures —
+  // user couldn't tell whether the click did anything.
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ seq: number }>;
+      setRerecordSeq(ce.detail.seq);
+    };
+    window.addEventListener("vp-rerecord-segment", handler);
+    return () => window.removeEventListener("vp-rerecord-segment", handler);
+  }, []);
+
+  // Memoized so the keyboard-shortcut listener effect below doesn't
+  // re-attach on every render. Depends on state.session (folder + content).
+  //
+  // Writes transcript.md to disk AND puts it on the clipboard with TWO
+  // representations: the markdown body (paste into chat / Claude Code as
+  // text) and a file URL (paste into Finder produces a .md file; drag
+  // into Claude Code attaches as a file Read can open). The dual-rep
+  // pattern is the same as save_and_copy_image (PNG bytes + file URL).
+  const onCopyAndSend = useCallback(async () => {
+    if (!state.session) {
+      setToast({ kind: "err", text: "No active session to copy." });
+      return;
+    }
+    const session = state.session;
+    try {
+      const md = renderMarkdown(session);
+      const path = await invoke<string>("save_and_copy_markdown", {
+        folder: session.folder,
+        markdown: md,
+      });
+      setToast({
+        kind: "ok",
+        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript. Paste as text in chat, OR paste in Finder to drop a .md file (saved at ${path}).`,
+      });
+    } catch (err) {
+      console.error("[VisionPipe] Copy & Send failed:", err);
+      // Last-resort fallback: try the old text-only clipboard write so the
+      // user gets *something*. They can manually copy the file from the
+      // session folder if needed.
+      try {
+        const md = renderMarkdown(session);
+        await writeText(md);
+        const bytes = new TextEncoder().encode(md);
+        await invoke("write_session_file", {
+          folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
+        });
+        setToast({
+          kind: "ok",
+          text: `Copied as text only (file-clipboard failed). transcript.md is in the session folder.`,
+        });
+      } catch (innerErr) {
+        setToast({
+          kind: "err",
+          text: `Copy & Send failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+  }, [state.session]);
+
+  // Listen for the window-scoped Copy & Send hotkey dispatched by App.tsx.
+  useEffect(() => {
+    const handler = () => void onCopyAndSend();
+    window.addEventListener("vp-copy-and-send", handler);
+    return () => window.removeEventListener("vp-copy-and-send", handler);
+  }, [onCopyAndSend]);
+
+  if (!state.session) return null;
+  const session = state.session;
+
+  const takeNext = () => window.dispatchEvent(new CustomEvent("vp-take-next-screenshot"));
+
+  const requestDelete = async (seq: number) => {
+    const target = session.screenshots.find(s => s.seq === seq);
+    if (!target) return;
+    if (!confirm(`Delete Screenshot ${seq}? This will remove the image and its narration. Sequence numbers will not be reused.`)) return;
+    await invoke("move_to_deleted", { folder: session.folder, filename: `${target.canonicalName}.png` });
+    dispatch({ type: "DELETE_SCREENSHOT", seq });
+  };
+
+  const requestRerecord = (seq: number) => {
+    // Gate through mic onboarding: if user hasn't granted mic + speech
+    // permissions yet, show the educational MicOnboardingModal first
+    // instead of opening ReRecordModal (which would just call
+    // getUserMedia directly and let macOS prompt with no context).
+    const onboarded = localStorage.getItem("vp-mic-onboarded") === "1";
+    if (!onboarded) {
+      window.dispatchEvent(new CustomEvent("vp-show-mic-modal"));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq } }));
+  };
+
+  // ── Flush master mic, then end the session ──
+  // v0.6.0: previously did its own MediaRecorder stop+write of
+  // audio-master.webm. With the v0.5.2 cpal switch, audio doesn't get
+  // saved as a file at all — only its transcript. clearRecorder drains
+  // the in-flight segment's transcript into the appropriate place.
+  // v0.6.1: also tells Rust to refresh the tray menu so the just-ended
+  // bundle shows up in the right-click submenu without an app restart.
+  const onNewSession = async () => {
+    await mic.clearRecorder();
+    mic.closeDeepgram();
+    dispatch({ type: "END_SESSION" });
+    void invoke("refresh_tray").catch(() => {/* best-effort */});
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#0e1410" }}>
+      <Header
+        micRecording={mic.recording}
+        micPermissionDenied={mic.permissionDenied}
+        networkState={mic.networkState}
+        onToggleMic={mic.onToggle}
+        onToggleViewMode={() => dispatch({ type: "TOGGLE_VIEW_MODE" })}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNewSession={onNewSession}
+        onOpenSessionFolder={() => alert(session.folder)}
+      />
+      <main style={{ flex: 1, overflow: "hidden" }}>
+        {session.viewMode === "interleaved" ? (
+          <div style={{ height: "100%", overflow: "auto" }}>
+            <InterleavedView
+              onTakeNextScreenshot={takeNext}
+              onRequestRerecord={requestRerecord}
+              onRequestDelete={requestDelete}
+              onOpenLightbox={setLightboxSeq}
+            />
+          </div>
+        ) : (
+          <SplitView
+            onTakeNextScreenshot={takeNext}
+            onRequestRerecord={requestRerecord}
+            onRequestDelete={requestDelete}
+          />
+        )}
+      </main>
+      <Footer
+        onCopyAndSend={onCopyAndSend}
+        copyTooltip={`Copies markdown for ${session.screenshots.length} screenshots + transcript`}
+        busy={false}
+      />
+      {/* Toast for Copy & Send feedback */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 70, right: 20, maxWidth: 400, zIndex: 1200,
+          padding: "10px 14px", borderRadius: 6,
+          background: toast.kind === "ok" ? "#1a3a2a" : "#3a1a1a",
+          border: `1px solid ${toast.kind === "ok" ? "#2e8b7a" : "#c0462a"}`,
+          color: "#e8efe9", fontSize: 12, fontFamily: "Verdana, sans-serif",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+        }}>
+          {toast.text}
+        </div>
+      )}
+      {lightboxSeq !== null && <Lightbox seq={lightboxSeq} onClose={() => setLightboxSeq(null)} />}
+      {rerecordSeq !== null && <ReRecordModal seq={rerecordSeq} onClose={() => setRerecordSeq(null)} />}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+    </div>
+  );
+}

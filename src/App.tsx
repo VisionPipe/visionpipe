@@ -1,118 +1,60 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { getVersion } from "@tauri-apps/api/app";
-import logoUrl from "./images/visionpipe-logo.svg";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { SessionProvider, useSession } from "./state/session-context";
+import { MicProvider } from "./state/mic-context";
+import { MicOnboardingModal } from "./components/MicOnboardingModal";
+import { SelectionOverlay } from "./components/SelectionOverlay";
+import { SessionWindow } from "./components/SessionWindow";
+import { HistoryHub } from "./components/HistoryHub";
+import { Onboarding } from "./components/Onboarding";
+import { generateCanonicalName } from "./lib/canonical-name";
+import type { PermissionStatus } from "./lib/permissions-types";
+import type { CaptureMetadata, Screenshot } from "./types/session";
+import type { NetworkState } from "./components/Header";
 
-// ── Earthy palette ──
-const C = {
-  teal: "#2e8b7a",
-  amber: "#d4882a",
-  cream: "#f5f0e8",
-  forest: "#1a2a20",
-  deepForest: "#141e18",
-  sienna: "#c0462a",
-  textMuted: "#8a9a8a",
-  textDim: "#5a6a5a",
-  border: "#2a3a2a",
-  borderLight: "#3a4a3a",
-};
+// "onboarding" is the initial mode on every launch. We check permissions
+// immediately and either keep showing the onboarding card (any missing) or
+// fall through to "idle". The System Events check may trigger an osascript
+// TCC prompt; showing the card first gives the user context before the
+// system dialog fires.
+type AppMode = "idle" | "onboarding" | "selecting" | "session";
 
-type AppMode = "idle" | "onboarding" | "selecting" | "annotating";
-type DrawTool = "pen" | "rect" | "arrow" | "circle" | "text";
-
-interface PermissionStatus {
-  screenRecording: boolean;
-  systemEvents: boolean;
-  accessibility: boolean;
-  microphone: boolean;
-  speechRecognition: boolean;
-}
-
-interface CaptureMetadata {
-  app: string;
-  window: string;
-  resolution: string;
-  scale: string;
-  os: string;
-  osBuild: string;
-  timestamp: string;
-  hostname: string;
-  username: string;
-  locale: string;
-  timezone: string;
-  displayCount: number;
-  primaryDisplay: string;
-  colorSpace: string;
-  cpu: string;
-  memoryGb: string;
-  darkMode: boolean;
-  battery: string;
-  uptime: string;
-  activeUrl: string;
-  // Frontend-added fields
-  captureWidth: number;
-  captureHeight: number;
-  captureMethod: string;
-  imageSizeKb: number;
-}
-
-interface SelectionRect {
-  startX: number;
-  startY: number;
-  endX: number;
-  endY: number;
-}
-
-/** Measure actual image dimensions and file size from a base64 data URI */
-async function measureImageDims(dataUri: string | null): Promise<{ captureWidth: number; captureHeight: number; imageSizeKb: number }> {
-  if (!dataUri) return { captureWidth: 0, captureHeight: 0, imageSizeKb: 0 };
-
-  // Estimate file size from base64 (data URI header + base64 payload)
-  const base64Start = dataUri.indexOf(",") + 1;
-  const base64Len = dataUri.length - base64Start;
-  const imageSizeKb = Math.round((base64Len * 3) / 4 / 1024);
-
-  // Load image to get actual pixel dimensions
-  const img = new Image();
-  const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-    img.onerror = () => resolve({ w: 0, h: 0 });
-    img.src = dataUri;
-  });
-
-  console.log(`[VisionPipe] Actual image: ${dims.w}x${dims.h}, ~${imageSizeKb} KB`);
-  return { captureWidth: dims.w, captureHeight: dims.h, imageSizeKb };
-}
-
-function App() {
-  const [mode, setMode] = useState<AppMode>("idle");
-  const [annotation, setAnnotation] = useState("");
-  const [croppedScreenshot, setCroppedScreenshot] = useState<string | null>(null);
-  const [metadata, setMetadata] = useState<CaptureMetadata | null>(null);
-  const [activeTool, setActiveTool] = useState<DrawTool>("pen");
-  const [drawColor, setDrawColor] = useState(C.amber);
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState("");
-  const [sessionCredits, setSessionCredits] = useState(0);
-  const [selection, setSelection] = useState<SelectionRect | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+function AppInner() {
+  const { state, dispatch } = useSession();
+  const [mode, setMode] = useState<AppMode>("onboarding");
+  const [captureMode, setCaptureMode] = useState<"region" | "scrolling">("region");
   const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
-  const [justCopied, setJustCopied] = useState(false);
-  const [appVersion, setAppVersion] = useState("0.0.0");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const modeRef = useRef<AppMode>(mode);
+  const modeRef = useRef<AppMode>("onboarding");
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  useEffect(() => {
-    getVersion().then(setAppVersion).catch(() => {});
-  }, []);
+  // ── Master audio recorder lifecycle (cpal, on-device) ──
+  // We don't hold a JS-side handle anymore — the recorder lives in Rust as
+  // a global singleton (see audio.rs). React tracks only whether it's
+  // active so the UI mic icon and capture-flow gates can react. After
+  // END_SESSION there's nothing JS-side to clear.
+  const [micRecording, setMicRecording] = useState(false);
+  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+  // Mic + Speech Recognition permissions are deferred to the FIRST time
+  // the user clicks the mic button in the Header (see MicOnboardingModal).
+  // This preserves the no-fluff onboarding for silent-capture-only users
+  // while still surfacing the explainer for users who want voice notes.
+  const [micOnboardingShown, setMicOnboardingShown] = useState<boolean>(
+    () => localStorage.getItem("vp-mic-onboarded") === "1"
+  );
+  const [showMicModal, setShowMicModal] = useState(false);
 
-  const captureCredits = 1 + (transcript ? 2 : 0);
+  // networkState is fixed to "local-only" since the v0.5.2 switch from
+  // Deepgram (cloud streaming) to Apple SFSpeechRecognizer (on-device
+  // batch). Kept as state so the Header indicator API doesn't change; if
+  // we re-enable cloud streaming behind a Settings toggle, this flips
+  // back to "online" / "offline" / "local-only".
+  const [networkState] = useState<NetworkState>("local-only");
+  const sessionRef = useRef(state.session);
+  useEffect(() => { sessionRef.current = state.session; }, [state.session]);
 
-  // ── Show onboarding window (resize + center + show) ──
+  // ── Show/resize/center the window for onboarding ──
   const showOnboardingWindow = useCallback(async () => {
     const win = getCurrentWindow();
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
@@ -123,25 +65,27 @@ function App() {
     await win.setFocus();
   }, []);
 
-  // ── On mount: show the welcome card FIRST, then check permissions. ──
-  // The order matters because check_permissions for System Events uses
-  // osascript, which can trigger a TCC prompt on first ever run. We want
-  // the welcome card visible behind the prompt so the user has context.
+  // ── On mount: set onboarding mode immediately, then fetch permission state.
+  // Order matters: the welcome card must be visible before osascript fires
+  // its TCC prompt for System Events.
   useEffect(() => {
     (async () => {
       setMode("onboarding");
       await showOnboardingWindow();
-
       try {
         const status = await invoke<PermissionStatus>("check_permissions");
         setPermissions(status);
+        // Welcome card stays visible on every launch until the user clicks
+        // "Get Started". The previous "auto-hide if all permissions granted"
+        // logic made the app appear to flash-and-quit because the only
+        // visible UI was hidden one frame after mount.
       } catch (err) {
         console.error("[VisionPipe] check_permissions failed:", err);
       }
     })();
   }, [showOnboardingWindow]);
 
-  // ── Auto-poll permissions while onboarding is visible ──
+  // ── Auto-poll permissions every 2 s while onboarding is visible ──
   useEffect(() => {
     if (mode !== "onboarding") return;
     const interval = setInterval(async () => {
@@ -153,7 +97,7 @@ function App() {
     return () => clearInterval(interval);
   }, [mode]);
 
-  // ── Listen for tray menu's "Show Onboarding" action ──
+  // ── Listen for tray menu "Show Onboarding" event ──
   useEffect(() => {
     const unlisten = listen("show-onboarding", async () => {
       try {
@@ -163,26 +107,206 @@ function App() {
       setMode("onboarding");
       await showOnboardingWindow();
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => { unlisten.then(fn => fn()); };
   }, [showOnboardingWindow]);
 
-  // ── Listen for hotkey event from Rust ──
+  // Resize to a HistoryHub-friendly window size centered on the current
+  // monitor. Used when transitioning into the idle/HistoryHub view from
+  // (a) onboarding dismissal, (b) selection-cancel, (c) end-session.
+  // Defined here (not later in the file) because the post-END_SESSION
+  // effect right below needs to reference it.
+  const resizeForHistoryHub = useCallback(async () => {
+    const win = getCurrentWindow();
+    try {
+      const { currentMonitor } = await import("@tauri-apps/api/window");
+      const monitor = await currentMonitor();
+      if (monitor) {
+        const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+        const scale = monitor.scaleFactor ?? 1;
+        const monitorW = monitor.size.width;
+        const monitorH = monitor.size.height;
+        const targetW = Math.max(Math.round(900 * scale), Math.min(Math.round(1400 * scale), Math.round(monitorW * 0.55)));
+        const targetH = Math.max(Math.round(640 * scale), Math.min(Math.round(900 * scale), Math.round(monitorH * 0.75)));
+        const targetX = monitor.position.x + Math.round((monitorW - targetW) / 2);
+        const targetY = monitor.position.y + Math.round((monitorH - targetH) / 2);
+        await win.setSize(new PhysicalSize(targetW, targetH));
+        await win.setPosition(new PhysicalPosition(targetX, targetY));
+      }
+    } catch (err) {
+      console.warn("[VisionPipe] resizeForHistoryHub failed:", err);
+    }
+  }, []);
+
+  // ── Reset mode to "idle" when the session ends ──
+  // SessionWindow's "New Session" button dispatches END_SESSION (clearing
+  // state.session) but doesn't touch App's mode. Without this effect, mode
+  // would stay at "session" forever after the first end-session, which
+  // would cause the global hotkey handler below to ignore ⌘⇧C presses
+  // (since it only fires when mode === "idle"). HistoryHub renders correctly
+  // either way (it triggers on !state.session), but the hotkey gate breaks.
+  // Also shrinks the window back to HistoryHub size — the SessionWindow
+  // dimensions (70%×85% of monitor) are too large for the bundle list.
   useEffect(() => {
-    const unlisten = listen<string>("start-capture", (event) => {
-      // Ignore if not in idle mode (e.g., onboarding visible, or mid-capture)
+    if (!state.session && mode === "session") {
+      setMode("idle");
+      void resizeForHistoryHub();
+    }
+  }, [state.session, mode, resizeForHistoryHub]);
+
+  // ── Listen for the global hotkey event from Rust ──
+  useEffect(() => {
+    const unlisten = listen<string>("start-capture", () => {
+      // Ignore if not in idle mode (e.g. onboarding visible, mid-capture)
       if (modeRef.current !== "idle") {
         console.log("[VisionPipe] start-capture ignored, mode is", modeRef.current);
         return;
       }
-      console.log("[VisionPipe] start-capture received, payload:", event.payload);
+      console.log("[VisionPipe] start-capture received");
+      setCaptureMode("region");
       setMode("selecting");
-      setSelection(null);
-      setIsDragging(false);
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // ── Re-check permissions on demand (button click) ──
+  // ── Listen for the scroll-capture hotkey (⌘⇧S) from Rust ──
+  // Same selection overlay as regular capture, but the SelectionOverlay
+  // calls `take_scrolling_screenshot` on confirm so the page scrolls
+  // and the frames are stitched into one tall image.
+  useEffect(() => {
+    const unlisten = listen<string>("start-scroll-capture", () => {
+      if (modeRef.current !== "idle") {
+        console.log("[VisionPipe] start-scroll-capture ignored, mode is", modeRef.current);
+        return;
+      }
+      console.log("[VisionPipe] start-scroll-capture received");
+      setCaptureMode("scrolling");
+      setMode("selecting");
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // ── Listen for "show mic onboarding modal" event ──
+  // Dispatched by SessionWindow when the user clicks the per-card
+  // Re-record button before completing mic onboarding. Routes the user
+  // through the same explainer flow as the Header pill click.
+  useEffect(() => {
+    const handler = () => setShowMicModal(true);
+    window.addEventListener("vp-show-mic-modal", handler);
+    return () => window.removeEventListener("vp-show-mic-modal", handler);
+  }, []);
+
+  // ── Listen for the in-app "Take next screenshot" trigger from SessionWindow ──
+  // Unlike the Rust global-shortcut path (which resizes the window to
+  // fullscreen before firing start-capture), the in-app "+" button fires
+  // this event directly. After the first capture, the session window has
+  // been shrunk to 70%×85% — so we must re-expand to fullscreen here so
+  // the SelectionOverlay covers the whole screen and the user can drag
+  // any region they want, not just within the small post-capture window.
+  useEffect(() => {
+    const handler = async () => {
+      try {
+        // Step 1: hide VP + capture metadata of the previously frontmost
+        // app (the user's actual target, not Vision|Pipe). Without this
+        // the markdown's "App: …" line would say "visionpipe" because by
+        // the time get_metadata runs, VP would still be focused.
+        await invoke("prepare_in_app_capture");
+
+        // Step 2: now that metadata is stashed, resize VP to fullscreen
+        // for the SelectionOverlay.
+        const win = getCurrentWindow();
+        const { currentMonitor } = await import("@tauri-apps/api/window");
+        const monitor = await currentMonitor();
+        if (monitor) {
+          const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+          await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+          await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
+        }
+        await win.show();
+        await win.setFocus();
+        await win.setAlwaysOnTop(true);
+      } catch (err) {
+        console.warn("[VisionPipe] vp-take-next-screenshot prepare failed:", err);
+      }
+      setCaptureMode("region");
+      setMode("selecting");
+    };
+    window.addEventListener("vp-take-next-screenshot", handler);
+    return () => window.removeEventListener("vp-take-next-screenshot", handler);
+  }, []);
+
+  // ── Persist last-used viewMode to localStorage as a per-user preference ──
+  useEffect(() => {
+    if (state.session) localStorage.setItem("vp-default-view", state.session.viewMode);
+  }, [state.session?.viewMode]);
+
+  // ── Window-scoped hotkey wiring ──
+  // Loads user-configured combos from the Rust persistence layer
+  // (`load_hotkey_config` — Task 21) on mount, then attaches a single
+  // `keydown` listener on `window` that dispatches to the appropriate action.
+  // Falls back to the same defaults the Rust side hardcodes if the load fails.
+  const [hotkeys, setHotkeys] = useState({
+    copyAndSend: "CmdOrCtrl+Enter",
+    rerecordActive: "CmdOrCtrl+Shift+R",
+    toggleViewMode: "CmdOrCtrl+T",
+  });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const cfg = await invoke<{
+          take_next_screenshot: string;
+          copy_and_send: string;
+          rerecord_active: string;
+          toggle_view_mode: string;
+        }>("load_hotkey_config");
+        setHotkeys({
+          copyAndSend: cfg.copy_and_send,
+          rerecordActive: cfg.rerecord_active,
+          toggleViewMode: cfg.toggle_view_mode,
+        });
+      } catch (err) {
+        console.warn("[VisionPipe] Failed to load hotkey config; using defaults:", err);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const matches = (e: KeyboardEvent, combo: string): boolean => {
+      const parts = combo.split("+");
+      const wantsMeta = parts.includes("CmdOrCtrl");
+      const wantsShift = parts.includes("Shift");
+      const wantsAlt = parts.includes("Alt");
+      const meta = (e.metaKey || e.ctrlKey);
+      const key = parts.filter(p => !["CmdOrCtrl", "Shift", "Alt"].includes(p))[0];
+      if (!key) return false;
+      if (wantsMeta !== meta) return false;
+      if (wantsShift !== e.shiftKey) return false;
+      if (wantsAlt !== e.altKey) return false;
+      // Compare keys case-insensitively for letters; case-sensitively for named keys
+      const eKey = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+      const cKey = key.length === 1 ? key.toUpperCase() : key;
+      return eKey === cKey;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (matches(e, hotkeys.copyAndSend)) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("vp-copy-and-send"));
+      } else if (matches(e, hotkeys.toggleViewMode)) {
+        e.preventDefault();
+        if (state.session) dispatch({ type: "TOGGLE_VIEW_MODE" });
+      } else if (matches(e, hotkeys.rerecordActive)) {
+        e.preventDefault();
+        const last = state.session?.screenshots[state.session.screenshots.length - 1];
+        if (last) {
+          window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq: last.seq } }));
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hotkeys, state.session, dispatch]);
+
+  // ── Re-check permissions on demand (Onboarding button click) ──
   const recheckPermissions = useCallback(async () => {
     try {
       const status = await invoke<PermissionStatus>("check_permissions");
@@ -192,1071 +316,314 @@ function App() {
     }
   }, []);
 
-  // ── Dismiss onboarding (Got it button) ──
+  // ── Dismiss onboarding (Got it! button — only enabled when all granted) ──
+  // Switches to "idle" mode and resizes the window to a session-friendly
+  // size centered on the current monitor. The window stays VISIBLE so the
+  // user lands on HistoryHub (their bundle history + "+ New Bundle" CTA).
+  // Previously hid the window, but now that idle = HistoryHub the user
+  // needs to actually see something.
   const dismissOnboarding = useCallback(async () => {
-    const win = getCurrentWindow();
-    await win.hide();
     setMode("idle");
-  }, []);
-
-  // ── Complete selection: capture the region via Rust, then show annotation UI ──
-  const completeSelection = useCallback(async (rect: SelectionRect) => {
-    const x = Math.min(rect.startX, rect.endX);
-    const y = Math.min(rect.startY, rect.endY);
-    const w = Math.abs(rect.endX - rect.startX);
-    const h = Math.abs(rect.endY - rect.startY);
-
-    if (w < 10 || h < 10) return;
-
+    await resizeForHistoryHub();
     const win = getCurrentWindow();
-    // Get the window's position on screen so we can translate
-    // viewport-relative clientX/Y to absolute screen coords.
-    // outerPosition() returns physical pixels, so divide by DPR
-    // since the screenshots crate uses macOS point coordinates.
-    const winPos = await win.outerPosition();
-    await win.hide();
-    // 300ms ensures the transparent webview is fully off-screen before
-    // screencapture runs — 150ms wasn't always enough on M-series Macs and
-    // the selection overlay was getting baked into the captured image.
-    await new Promise((r) => setTimeout(r, 300));
+    await win.show();
+    await win.setFocus();
+  }, [resizeForHistoryHub]);
 
-    const dpr = window.devicePixelRatio || 1;
-    // macOS CGDisplayCreateImageForRect uses point (logical) coords,
-    // NOT physical pixels. Pass CSS pixel values directly.
-    const captureX = Math.round(x + winPos.x / dpr);
-    const captureY = Math.round(y + winPos.y / dpr);
-    const captureW = Math.round(w);
-    const captureH = Math.round(h);
-
-    let screenshotDataUri: string | null = null;
+  // ── Initialize the session's audio recorder for on-device transcription.
+  // v0.5.2: switched from MediaRecorder + Deepgram (cloud) to Rust cpal +
+  // Apple SFSpeechRecognizer (on-device). Each screenshot's narration is
+  // whatever was recorded between that screenshot and the next (or session
+  // end). Per-segment batch transcription removes the vp-edge proxy
+  // dependency entirely. Cloud streaming (Deepgram) was removed in v0.6.0;
+  // git history has the implementation if we need to re-enable it behind a
+  // Settings toggle.
+  const initSessionAudio = useCallback(async () => {
     try {
-      screenshotDataUri = await invoke<string>("take_screenshot", {
-        x: captureX, y: captureY, width: captureW, height: captureH
-      });
-      setCroppedScreenshot(screenshotDataUri);
+      // Start the cpal recording for the FIRST segment of this session.
+      // stop_recording_and_transcribe will be called at the next screenshot
+      // boundary, returning the transcript of that segment which we'll
+      // dispatch into the just-finished screenshot's transcriptSegment.
+      await invoke("start_recording");
+      setMicRecording(true);
     } catch (err) {
-      console.error("[VisionPipe] Region capture failed:", err);
-      setCroppedScreenshot(null);
+      console.warn("[VisionPipe] start_recording failed (mic permission?):", err);
+      setMicPermissionDenied(true);
     }
-
-    // Measure actual image dimensions from the captured data
-    const imgDims = await measureImageDims(screenshotDataUri);
-
-    try {
-      const meta = await invoke<CaptureMetadata>("get_metadata");
-      setMetadata({ ...meta, ...imgDims, captureMethod: "region" });
-    } catch {
-      setMetadata({
-        app: "Unknown", window: "Unknown",
-        resolution: `${screen.width}x${screen.height}`,
-        scale: `${dpr}x`, os: navigator.platform, osBuild: "",
-        timestamp: new Date().toISOString(),
-        hostname: "", username: "", locale: "", timezone: "",
-        displayCount: 1, primaryDisplay: "Unknown", colorSpace: "sRGB",
-        cpu: "", memoryGb: "", darkMode: false, battery: "Unknown",
-        uptime: "", activeUrl: "",
-        ...imgDims, captureMethod: "region",
-      });
-    }
-
-    try {
-      const { LogicalSize } = await import("@tauri-apps/api/dpi");
-      await win.setAlwaysOnTop(false);
-      await win.setSize(new LogicalSize(880, 492));
-      await win.center();
-      await new Promise((r) => setTimeout(r, 100));
-      await win.show();
-      await win.setFocus();
-    } catch (err) {
-      console.error("[VisionPipe] Window resize failed:", err);
-      await win.show();
-      await win.setFocus();
-    }
-    setMode("annotating");
-    setTimeout(() => textareaRef.current?.focus(), 200);
   }, []);
 
-  // ── Fullscreen capture (Enter key during selection) ──
-  const captureFullScreen = useCallback(async () => {
-    const win = getCurrentWindow();
-    await win.hide();
-    // 300ms ensures the transparent webview is fully off-screen before
-    // screencapture runs — 150ms wasn't always enough on M-series Macs and
-    // the selection overlay was getting baked into the captured image.
-    await new Promise((r) => setTimeout(r, 300));
-
-    const dpr = window.devicePixelRatio || 1;
-
-    let screenshotDataUri: string | null = null;
+  // ── Stop the current segment's recording and transcribe it.
+  // Returns the transcript text (may be empty if nothing captured).
+  // Called at every screenshot boundary AND at session-end / new-session.
+  const stopAndTranscribeCurrentSegment = useCallback(async (): Promise<string> => {
+    if (!micRecording) return "";
     try {
-      screenshotDataUri = await invoke<string>("capture_fullscreen");
-      setCroppedScreenshot(screenshotDataUri);
+      const transcript = await invoke<string>("stop_recording");
+      setMicRecording(false);
+      return transcript ?? "";
     } catch (err) {
-      console.error("[VisionPipe] Fullscreen capture failed:", err);
-      setCroppedScreenshot(null);
+      console.warn("[VisionPipe] stop_recording failed:", err);
+      setMicRecording(false);
+      return "";
     }
+  }, [micRecording]);
 
-    const imgDims = await measureImageDims(screenshotDataUri);
-
-    try {
-      const meta = await invoke<CaptureMetadata>("get_metadata");
-      setMetadata({ ...meta, ...imgDims, captureMethod: "fullscreen" });
-    } catch {
-      setMetadata({
-        app: "Unknown", window: "Unknown",
-        resolution: `${screen.width}x${screen.height}`,
-        scale: `${dpr}x`, os: navigator.platform, osBuild: "",
-        timestamp: new Date().toISOString(),
-        hostname: "", username: "", locale: "", timezone: "",
-        displayCount: 1, primaryDisplay: "Unknown", colorSpace: "sRGB",
-        cpu: "", memoryGb: "", darkMode: false, battery: "Unknown",
-        uptime: "", activeUrl: "",
-        ...imgDims, captureMethod: "fullscreen",
-      });
-    }
-
-    try {
-      const { LogicalSize } = await import("@tauri-apps/api/dpi");
-      await win.setAlwaysOnTop(false);
-      await win.setSize(new LogicalSize(880, 492));
-      await win.center();
-      await new Promise((r) => setTimeout(r, 100));
-      await win.show();
-      await win.setFocus();
-    } catch (err) {
-      console.error("[VisionPipe] Window resize failed:", err);
-      await win.show();
-      await win.setFocus();
-    }
-    setMode("annotating");
-    setTimeout(() => textareaRef.current?.focus(), 200);
-  }, []);
-
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    setSelection({ startX: e.clientX, startY: e.clientY, endX: e.clientX, endY: e.clientY });
-  }, []);
-
-  const onMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDragging) return;
-    setSelection((prev) => prev ? { ...prev, endX: e.clientX, endY: e.clientY } : null);
-  }, [isDragging]);
-
-  const onMouseUp = useCallback((e: React.MouseEvent) => {
-    if (!isDragging || !selection) return;
-    const finalSelection = { ...selection, endX: e.clientX, endY: e.clientY };
-    setIsDragging(false);
-    setSelection(finalSelection);
-    completeSelection(finalSelection);
-  }, [isDragging, selection, completeSelection]);
-
-  const handleSubmit = useCallback(async () => {
-    if (!metadata) return;
-
-    // Show "Copied" overlay IMMEDIATELY so the user sees feedback before
-    // the canvas + clipboard work runs. The auto-close timer fires after
-    // 1500ms regardless of how long the actual copy takes.
-    setJustCopied(true);
-
-    // Build the composite image: screenshot + annotation + metadata in one PNG
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-
-    // Build user comments (annotation + transcript combined)
-    const userComments: string[] = [];
-    if (annotation.trim()) userComments.push(annotation.trim());
-    if (transcript.trim()) userComments.push(`[voice] ${transcript.trim()}`);
-    const userCommentText = userComments.length > 0
-      ? userComments.join(" ")
-      : "No additional comments provided.";
-
-    // Build two columns: left = user text, right = capture metadata
-    const username = metadata.username || "User";
-
-    // Left column content (attribution + user request)
-    type TextBlock = { text: string; bold: boolean; color: string };
-    const leftBlocks: TextBlock[] = [];
-    leftBlocks.push({ text: `Annotation by Vision|Pipe.ai`, bold: true, color: C.amber });
-    leftBlocks.push({ text: `Submitted by: ${username}`, bold: false, color: C.textMuted });
-    leftBlocks.push({ text: "", bold: false, color: C.cream }); // spacer
-    leftBlocks.push({ text: `${username}'s request: "${userCommentText}"`, bold: false, color: C.cream });
-    leftBlocks.push({ text: `[User input, passed verbatim by Vision|Pipe]`, bold: false, color: C.textDim });
-
-    // Right column content (capture metadata)
-    const sizeStr = metadata.imageSizeKb > 1024
-      ? (metadata.imageSizeKb / 1024).toFixed(1) + " MB"
-      : metadata.imageSizeKb + " KB";
-    const metaLines: { text: string; color: string }[] = [
-      { text: "Capture metadata", color: C.amber },
-      { text: `${metadata.captureWidth}x${metadata.captureHeight}px (${sizeStr})`, color: C.textMuted },
-      { text: `${metadata.captureMethod} | ${metadata.app}`, color: C.textMuted },
-      { text: `${metadata.os} (${metadata.osBuild})`, color: C.textMuted },
-      { text: `${metadata.resolution} @ ${metadata.scale}`, color: C.textMuted },
-      { text: `${metadata.cpu}`, color: C.textMuted },
-      { text: `${metadata.memoryGb} | ${metadata.battery}`, color: C.textMuted },
-      { text: `${metadata.username}@${metadata.hostname}`, color: C.textMuted },
-      { text: `${metadata.timestamp}`, color: C.textMuted },
-      { text: `Vision|Pipe v${appVersion}`, color: C.textDim },
-    ];
-
-    // Determine canvas width first
-    let imgW = 600, imgH = 400;
-    let img: HTMLImageElement | null = null;
-    if (croppedScreenshot) {
-      img = new Image();
-      await new Promise<void>((resolve) => {
-        img!.onload = () => resolve();
-        img!.onerror = () => resolve();
-        img!.src = croppedScreenshot!;
-      });
-      imgW = img.naturalWidth || 600;
-      imgH = img.naturalHeight || 400;
-      console.log(`[VisionPipe] Screenshot dimensions: ${imgW}x${imgH}`);
-    }
-    const maxW = Math.max(imgW, 500);
-
-    // Target: text panel at most 20% of image height.
-    // Single font size for all text, binary-searched to fit. Min 8px.
-    const maxPanelH = Math.round(imgH * 0.20);
-    const minFontSize = 8;
-    const maxFontSize = Math.max(16, Math.round(maxW * 0.018));
-
-    const makeFont = (bold: boolean, size: number) =>
-      `${bold ? "bold " : ""}${size}px Verdana, Geneva, sans-serif`;
-
-    // Layout: word-wrap left column into the left 60% of width,
-    // right column in the right 35% (5% gap)
-    type RenderedLine = { text: string; font: string; color: string; x: number };
-    const layoutAtSize = (fontSize: number) => {
-      const lh = Math.round(fontSize * 1.55);
-      const pad = Math.round(fontSize * 1.5);
-      const leftW = Math.round((maxW - pad * 2) * 0.58);
-      const rightX = pad + Math.round((maxW - pad * 2) * 0.63);
-      const rightW = maxW - rightX - pad;
-
-      // Word-wrap left blocks
-      const leftLines: RenderedLine[] = [];
-      for (const block of leftBlocks) {
-        if (block.text === "") {
-          leftLines.push({ text: "", font: makeFont(false, fontSize), color: block.color, x: pad });
-          continue;
-        }
-        const font = makeFont(block.bold, fontSize);
-        ctx.font = font;
-        const words = block.text.split(/\s+/);
-        let cur = "";
-        for (const word of words) {
-          const test = cur ? cur + " " + word : word;
-          if (ctx.measureText(test).width > leftW && cur) {
-            leftLines.push({ text: cur, font, color: block.color, x: pad });
-            cur = word;
-          } else {
-            cur = test;
-          }
-        }
-        if (cur) leftLines.push({ text: cur, font, color: block.color, x: pad });
-      }
-
-      // Right column: metadata lines (no word-wrap, just truncate if needed)
-      const rightLines: RenderedLine[] = metaLines.map((m) => ({
-        text: m.text,
-        font: m.color === C.amber ? makeFont(true, fontSize) : makeFont(false, fontSize),
-        color: m.color,
-        x: rightX,
-      }));
-
-      const maxLines = Math.max(leftLines.length, rightLines.length);
-      const totalH = pad * 2 + maxLines * lh;
-      return { leftLines, rightLines, totalH, lh, pad };
-    };
-
-    // Binary search for the largest font size that fits
-    let lo = minFontSize, hi = maxFontSize;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (layoutAtSize(mid).totalH <= maxPanelH) {
-        lo = mid;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    const fontSize = lo;
-    const { leftLines, rightLines, totalH: panelHeight, lh: lineHeight, pad: panelPadding } = layoutAtSize(fontSize);
-
-    if (img && croppedScreenshot) {
-      canvas.width = maxW;
-      canvas.height = imgH + panelHeight;
-
-      // Draw screenshot
-      ctx.drawImage(img, 0, 0, imgW, imgH);
-      if (imgW < maxW) {
-        ctx.fillStyle = C.deepForest;
-        ctx.fillRect(imgW, 0, maxW - imgW, imgH);
-      }
-
-      // Draw panel background
-      ctx.fillStyle = C.deepForest;
-      ctx.fillRect(0, imgH, maxW, panelHeight);
-
-      // Draw separator line
-      ctx.strokeStyle = C.teal;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(0, imgH);
-      ctx.lineTo(maxW, imgH);
-      ctx.stroke();
-
-      // Draw left column
-      let y = imgH + panelPadding;
-      for (const line of leftLines) {
-        y += lineHeight * 0.7;
-        ctx.font = line.font;
-        ctx.fillStyle = line.color;
-        ctx.fillText(line.text, line.x, y);
-        y += lineHeight * 0.3;
-      }
-
-      // Draw right column
-      y = imgH + panelPadding;
-      for (const line of rightLines) {
-        y += lineHeight * 0.7;
-        ctx.font = line.font;
-        ctx.fillStyle = line.color;
-        ctx.fillText(line.text, line.x, y);
-        y += lineHeight * 0.3;
-      }
+  // ── Mic onboarding modal: triggered the first time the user clicks the
+  // mic button (Header) without having granted mic + speech permissions.
+  // Records that the prompt has been shown so we don't re-prompt on every
+  // click. If the user grants, immediately wire up the recorder for the
+  // current session.
+  const onMicOnboardComplete = useCallback(async (granted: { microphone: boolean; speechRecognition: boolean }) => {
+    setShowMicModal(false);
+    localStorage.setItem("vp-mic-onboarded", "1");
+    setMicOnboardingShown(true);
+    if (granted.microphone) {
+      await initSessionAudio();
     } else {
-      // No screenshot — just render the text panel
-      canvas.width = 500;
-      canvas.height = panelHeight;
-      ctx.fillStyle = C.deepForest;
-      ctx.fillRect(0, 0, 500, panelHeight);
-      let y = panelPadding;
-      for (const line of leftLines) {
-        y += lineHeight * 0.7;
-        ctx.font = line.font;
-        ctx.fillStyle = line.color;
-        ctx.fillText(line.text, line.x, y);
-        y += lineHeight * 0.3;
+      setMicPermissionDenied(true);
+    }
+  }, [initSessionAudio]);
+
+  const onMicOnboardSkip = useCallback(() => {
+    setShowMicModal(false);
+    // Don't persist; user can click the mic button again later to retry.
+  }, []);
+
+  const onCapture = useCallback(async (pngBytes: Uint8Array) => {
+    const metadata = await invoke<CaptureMetadata>("get_metadata");
+    // Local-time YYYY-MM-DD_HH-MM-SS (matches the canonical-name spec).
+    // Previously used ISO with `T` separator which produced names like
+    // VisionPipe-001-2026-05-03T17-53-27 — the spec wants underscore.
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+    const sessionId = state.session?.id ?? ts;
+
+    let folder = state.session?.folder;
+    const isFirstCapture = !state.session;
+    if (isFirstCapture) {
+      folder = await invoke<string>("create_session_folder", { sessionId });
+      const defaultView = (localStorage.getItem("vp-default-view") as "interleaved" | "split" | null) ?? "interleaved";
+      dispatch({
+        type: "START_SESSION",
+        session: {
+          id: sessionId, folder, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          audioFile: "audio-master.webm", viewMode: defaultView,
+          screenshots: [], closingNarration: "",
+        },
+      });
+      // Kick off the on-device recording for the first segment, only if
+      // the user has already gone through the (deferred) mic onboarding.
+      // Otherwise sessions start SILENT — user can click the mic button
+      // later to trigger the modal and start recording mid-session.
+      if (micOnboardingShown) {
+        await initSessionAudio();
+      }
+    } else if (micRecording) {
+      // SECOND-OR-LATER capture: stop the segment that was being recorded
+      // for the LAST screenshot, transcribe it, and append the result to
+      // that screenshot's narration. Then start a fresh segment for the
+      // new screenshot.
+      const transcript = await stopAndTranscribeCurrentSegment();
+      if (transcript.trim()) {
+        dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
+      }
+      // Restart recording for the new segment (will be transcribed at the
+      // next boundary).
+      try {
+        await invoke("start_recording");
+        setMicRecording(true);
+      } catch (err) {
+        console.warn("[VisionPipe] start_recording (next segment) failed:", err);
       }
     }
 
-    // Save PNG to disk and copy to clipboard (with file reference for Finder paste)
-    try {
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((b) => b ? resolve(b) : reject(new Error("toBlob failed")), "image/png");
-      });
-      const arrayBuffer = await blob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      console.log(`[VisionPipe] Canvas: ${canvas.width}x${canvas.height}, PNG blob: ${(blob.size / 1048576).toFixed(1)} MB`);
-      const savedPath = await invoke<string>("save_and_copy_image", { pngBytes: Array.from(uint8Array) });
-      console.log(`[VisionPipe] Saved and copied: ${savedPath}`);
-    } catch (err) {
-      console.error("[VisionPipe] Image clipboard failed, falling back to text:", err);
-      const lines: string[] = [];
-      if (annotation.trim()) lines.push(annotation.trim(), "");
-      if (transcript.trim()) lines.push(`[voice] ${transcript.trim()}`, "");
-      lines.push("---");
-      lines.push(`app: ${metadata.app} | window: ${metadata.window}`);
-      lines.push(`os: ${metadata.os} (${metadata.osBuild}) | uptime: ${metadata.uptime}`);
-      lines.push(`display: ${metadata.resolution} @ ${metadata.scale} | ${metadata.primaryDisplay}`);
-      lines.push(`cpu: ${metadata.cpu} | memory: ${metadata.memoryGb}`);
-      lines.push(`user: ${metadata.username}@${metadata.hostname} | locale: ${metadata.locale} | tz: ${metadata.timezone}`);
-      lines.push(`color space: ${metadata.colorSpace} | dark mode: ${metadata.darkMode ? "yes" : "no"} | battery: ${metadata.battery}`);
-      if (metadata.activeUrl) lines.push(`url: ${metadata.activeUrl}`);
-      lines.push(`captured: ${metadata.timestamp} | image: ${metadata.captureWidth}x${metadata.captureHeight}px (${metadata.imageSizeKb > 1024 ? (metadata.imageSizeKb / 1024).toFixed(1) + " MB" : metadata.imageSizeKb + " KB"}) | ${metadata.captureMethod}`);
-      lines.push("---", `Vision|Pipe v${appVersion}`);
-      await writeText(lines.join("\n"));
-    }
+    const seq = (state.session?.screenshots[state.session.screenshots.length - 1]?.seq ?? 0) + 1;
+    const canonicalName = generateCanonicalName({
+      seq, timestamp: ts, app: metadata.app,
+      activeUrl: metadata.activeUrl, windowTitle: metadata.window,
+    });
 
-    setSessionCredits((c) => c + captureCredits);
+    await invoke("write_session_file", {
+      folder: folder!, filename: `${canonicalName}.png`, bytes: Array.from(pngBytes),
+    });
 
-    // Auto-close after 1.5s. justCopied was set true at the top of handleSubmit.
-    setTimeout(() => {
-      setJustCopied(false);
-      resetAndHide();
-    }, 1500);
-  }, [annotation, transcript, metadata, captureCredits, croppedScreenshot, appVersion]);
+    const screenshot: Screenshot = {
+      seq, canonicalName, capturedAt: new Date().toISOString(),
+      audioOffset: { start: 0, end: null }, // reducer overwrites .start using audioElapsedSec; placeholder safe
+      caption: "", transcriptSegment: "", reRecordedAudio: null,
+      metadata, offline: false, // on-device transcription is never "offline"
+    };
+    dispatch({ type: "APPEND_SCREENSHOT", screenshot, audioElapsedSec: 0 });
 
-  const resetAndHide = useCallback(async () => {
-    setAnnotation("");
-    setTranscript("");
-    setCroppedScreenshot(null);
-    setSelection(null);
-    setMetadata(null);
-    setIsDragging(false);
-    setMode("idle");
+    setMode("session");
     const win = getCurrentWindow();
+    await win.show();
+    await win.setFocus();
     await win.setAlwaysOnTop(false);
-    await win.hide();
-  }, []);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { resetAndHide(); }
-      if (e.key === "Enter" && mode === "selecting") {
-        e.preventDefault();
-        captureFullScreen();
+    // ── Resize the (currently fullscreen) window down to a session-friendly
+    // size centered on the current monitor. The Rust hotkey handler grew it
+    // to monitor.size() so the SelectionOverlay could cover the screen; now
+    // that the overlay is gone, shrink it back. Use Physical units so this
+    // matches the Rust handler's PhysicalSize / PhysicalPosition pattern and
+    // we don't fight DPR (the monitor query returns physical pixels).
+    try {
+      const { currentMonitor } = await import("@tauri-apps/api/window");
+      const monitor = await currentMonitor();
+      if (monitor) {
+        const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+        const scale = monitor.scaleFactor ?? 1;
+        const monitorW = monitor.size.width;
+        const monitorH = monitor.size.height;
+        // Min/max caps are expressed in logical pixels; convert to physical.
+        const minWPhys = Math.round(800 * scale);
+        const minHPhys = Math.round(600 * scale);
+        const maxWPhys = Math.round(1600 * scale);
+        const maxHPhys = Math.round(1000 * scale);
+        const targetW = Math.max(minWPhys, Math.min(maxWPhys, Math.round(monitorW * 0.70)));
+        const targetH = Math.max(minHPhys, Math.min(maxHPhys, Math.round(monitorH * 0.85)));
+        const targetX = monitor.position.x + Math.round((monitorW - targetW) / 2);
+        const targetY = monitor.position.y + Math.round((monitorH - targetH) / 2);
+        await win.setSize(new PhysicalSize(targetW, targetH));
+        await win.setPosition(new PhysicalPosition(targetX, targetY));
       }
-      if (e.key === "Enter" && !e.shiftKey && mode === "annotating" && document.activeElement === textareaRef.current) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [resetAndHide, handleSubmit, captureFullScreen, mode]);
-
-  const toggleRecording = () => {
-    if (isRecording) {
-      setIsRecording(false);
-      if (!transcript) setTranscript("This dropdown is rendering below the viewport on Safari...");
-    } else {
-      setIsRecording(true);
-      setTranscript("");
+    } catch (err) {
+      console.error("[VisionPipe] session window resize failed:", err);
     }
-  };
+  }, [state.session, dispatch, micOnboardingShown, micRecording, initSessionAudio, stopAndTranscribeCurrentSegment]);
 
-  // ═══════════════════════════════════════
-  // IDLE
-  // ═══════════════════════════════════════
+  const onCancelCapture = useCallback(async () => {
+    const win = getCurrentWindow();
+    if (state.session) {
+      setMode("session");
+      await win.show();
+      await win.setAlwaysOnTop(false);
+    } else {
+      setMode("idle");
+      // Window is currently fullscreen (overlay). Shrink back to the
+      // HistoryHub size so the user doesn't land on a fullscreen empty
+      // panel after a misfire.
+      await resizeForHistoryHub();
+      await win.show();
+      await win.setAlwaysOnTop(false);
+    }
+  }, [state.session, resizeForHistoryHub]);
+
+  // ── Mic toggle (Header button) ──
+  // First click on a fresh install (or after sign-out): show the mic
+  // onboarding modal which triggers the macOS permission prompts. After
+  // grant, recording starts via onMicOnboardComplete → initSessionAudio.
+  // Subsequent clicks toggle the cpal session-level recording on/off.
+  // (When toggled off mid-session, no transcript is produced for the
+  // partial segment — user can manually type narration.)
+  const onToggleMic = useCallback(async () => {
+    if (!micOnboardingShown) {
+      setShowMicModal(true);
+      return;
+    }
+    if (micRecording) {
+      // Pause: stop + (optionally transcribe) the current segment
+      const transcript = await stopAndTranscribeCurrentSegment();
+      if (transcript.trim()) {
+        // Append to last screenshot (or closing narration if no screenshots)
+        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
+          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: transcript + " " });
+        } else {
+          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
+        }
+      }
+    } else {
+      // Resume: start a fresh recording segment
+      try {
+        await invoke("start_recording");
+        setMicRecording(true);
+      } catch (err) {
+        console.warn("[VisionPipe] mic-toggle start_recording failed:", err);
+      }
+    }
+  }, [micOnboardingShown, micRecording, stopAndTranscribeCurrentSegment, dispatch]);
+
+  // ── Stop the master recorder and drain its final segment.
+  // Called from SessionWindow's "New Session" button before END_SESSION,
+  // and from ReRecordModal so cpal's single-recording slot is free.
+  // Drains the in-flight segment's transcript into the last screenshot
+  // (or closing narration if no screenshots yet) so nothing the user
+  // said before stop is lost.
+  const clearRecorder = useCallback(async () => {
+    if (micRecording) {
+      const transcript = await stopAndTranscribeCurrentSegment();
+      if (transcript.trim()) {
+        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
+          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: transcript + " " });
+        } else {
+          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
+        }
+      }
+    }
+    setMicRecording(false);
+  }, [micRecording, stopAndTranscribeCurrentSegment, dispatch]);
+
+  // No-op kept for MicContext API stability — Deepgram WebSocket path was
+  // removed in v0.5.2 (replaced by Apple SFSpeechRecognizer). If we re-add
+  // cloud streaming behind a Settings toggle, this will become the close
+  // hook again.
+  const closeDeepgram = useCallback(() => {}, []);
+
+  // ── Flush master recorder on window close / app quit ──
+  // beforeunload fires when the Tauri window tears down. Drain the
+  // in-flight segment so the transcript isn't lost. Best-effort: a hard
+  // process kill bypasses this entirely.
+  useEffect(() => {
+    const handler = () => { void clearRecorder(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [clearRecorder]);
+
+  let view: ReactNode;
   if (mode === "onboarding") {
-    return (
+    view = (
       <Onboarding
         permissions={permissions}
         onRecheck={recheckPermissions}
         onDismiss={dismissOnboarding}
       />
     );
+  } else if (mode === "selecting") {
+    view = <SelectionOverlay onCapture={onCapture} onCancel={onCancelCapture} captureMode={captureMode} />;
+  } else if (state.session) {
+    view = <SessionWindow />;
+  } else {
+    // mode === "idle" OR (mode === "session" but session was just ended).
+    // After END_SESSION the user lands here, on HistoryHub, instead of the
+    // window disappearing — which used to be confusing ("did the app quit?").
+    view = <HistoryHub />;
   }
 
-  if (mode === "idle") return null;
-
-  // ═══════════════════════════════════════
-  // SELECTING — fullscreen crosshair
-  // ═══════════════════════════════════════
-  if (mode === "selecting") {
-    const selX = selection ? Math.min(selection.startX, selection.endX) : 0;
-    const selY = selection ? Math.min(selection.startY, selection.endY) : 0;
-    const selW = selection ? Math.abs(selection.endX - selection.startX) : 0;
-    const selH = selection ? Math.abs(selection.endY - selection.startY) : 0;
-
-    return (
-      <div
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        style={{
-          position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh",
-          cursor: "crosshair", background: "rgba(20, 30, 24, 0.35)",
-          zIndex: 99999, userSelect: "none", WebkitUserSelect: "none",
-        }}
-      >
-        {isDragging && selection && selW > 2 && selH > 2 && (
-          <>
-            <div style={{
-              position: "absolute", left: selX, top: selY, width: selW, height: selH,
-              border: `2px solid ${C.teal}`, background: "rgba(46, 139, 122, 0.08)",
-              pointerEvents: "none", boxSizing: "border-box",
-            }} />
-            <div style={{
-              position: "absolute", left: selX, top: selY + selH + 6,
-              background: "rgba(20, 30, 24, 0.85)", color: C.teal,
-              fontSize: 12, fontFamily: "'Source Code Pro', monospace",
-              padding: "3px 10px", borderRadius: 6, pointerEvents: "none",
-            }}>
-              {Math.round(selW)}x{Math.round(selH)}
-            </div>
-          </>
-        )}
-        {!isDragging && !selection && (
-          <div style={{
-            position: "absolute", top: "50%", left: "50%",
-            transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none",
-            background: "rgba(20, 30, 24, 0.82)", borderRadius: 16, padding: "24px 36px",
-            border: `1px solid ${C.border}`,
-            boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-          }}>
-            <div style={{ color: C.cream, fontSize: 20, fontWeight: 600, letterSpacing: "0.02em" }}>
-              Let's <span style={{ fontFamily: "'Source Code Pro', monospace", color: C.teal }}>screenshot | llm</span> it!
-            </div>
-            <div style={{ color: C.textMuted, fontSize: 13, marginTop: 10 }}>
-              Drag to select &bull; Enter for full screen &bull; Esc to cancel
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ═══════════════════════════════════════
-  // ANNOTATING — earthy annotation overlay
-  // ═══════════════════════════════════════
   return (
-    <div style={{
-      width: "100vw", height: "100vh", display: "flex", alignItems: "stretch", justifyContent: "stretch",
-      background: "transparent",
-      fontFamily: "Verdana, Geneva, sans-serif",
+    <MicProvider value={{
+      recording: micRecording,
+      permissionDenied: micPermissionDenied,
+      onToggle: onToggleMic,
+      networkState,
+      clearRecorder,
+      closeDeepgram,
     }}>
-      <div style={{
-        display: "flex", flexDirection: "column", flex: 1, borderRadius: 14, overflow: "hidden",
-        boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
-      }}>
-        <ChromeBar />
-        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-
-        {/* ── Left: Screenshot + Drawing Tools ── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: C.forest }}>
-
-          {/* Drawing Toolbar */}
-          <div style={{
-            padding: "8px 12px", background: C.deepForest, display: "flex", alignItems: "center", gap: 6,
-            borderBottom: `1px solid ${C.border}`,
-          }}>
-            <ToolButton icon="pen" active={activeTool === "pen"} onClick={() => setActiveTool("pen")} title="Freehand draw" />
-            <ToolButton icon="rect" active={activeTool === "rect"} onClick={() => setActiveTool("rect")} title="Rectangle" />
-            <ToolButton icon="arrow" active={activeTool === "arrow"} onClick={() => setActiveTool("arrow")} title="Arrow" />
-            <ToolButton icon="circle" active={activeTool === "circle"} onClick={() => setActiveTool("circle")} title="Circle" />
-            <ToolButton icon="text" active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text label" />
-
-            <div style={{ width: 1, height: 20, background: C.border, margin: "0 4px" }} />
-
-            <button
-              style={{
-                width: 24, height: 24, borderRadius: "50%", border: `2px solid ${C.borderLight}`,
-                background: drawColor, cursor: "pointer", padding: 0,
-              }}
-              onClick={() => setDrawColor(drawColor === C.amber ? C.teal : drawColor === C.teal ? C.sienna : C.amber)}
-              title="Annotation color"
-            />
-
-            <div style={{ width: 1, height: 20, background: C.border, margin: "0 4px" }} />
-
-            <ToolButton icon="undo" active={false} onClick={() => {}} title="Undo" />
-            <ToolButton icon="redo" active={false} onClick={() => {}} title="Redo" />
-
-            <div style={{ flex: 1 }} />
-
-            {metadata && (
-              <div style={{ fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.textDim, display: "flex", alignItems: "center", gap: 4 }}>
-                <span>{metadata.captureWidth}x{metadata.captureHeight}</span>
-                <span style={{ color: C.teal }}>|</span>
-                <span>{metadata.scale}</span>
-                <span style={{ color: C.teal }}>|</span>
-                <span>{metadata.captureMethod}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Screenshot Area */}
-          <div style={{
-            flex: 1, background: `linear-gradient(135deg, ${C.forest}, ${C.deepForest})`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            position: "relative", overflow: "hidden",
-          }}>
-            {croppedScreenshot ? (
-              <img src={croppedScreenshot} alt="Captured screenshot" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
-            ) : (
-              <div style={{ color: C.textDim, fontSize: 13, textAlign: "center" }}>
-                <div style={{ fontSize: 36, marginBottom: 8, opacity: 0.5 }}>&#128247;</div>
-                <span style={{ color: C.textMuted }}>Your Screenshot</span><br />
-                <span style={{ fontSize: 11, color: C.textDim }}>Displayed at captured size</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Right: Sidebar ── */}
-        <div style={{
-          width: 250, flexShrink: 0, background: C.deepForest,
-          borderLeft: `1px solid ${C.border}`,
-          display: "flex", flexDirection: "column", padding: 16, overflow: "hidden",
-        }}>
-          {/* Logo */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <img src={logoUrl} style={{ width: 32, height: 32, borderRadius: 8 }} alt="Vision|Pipe logo" />
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.cream }}>
-              Vision<span style={{ color: C.teal, fontFamily: "'Source Code Pro', monospace" }}>|</span><span style={{ color: C.teal }}>Pipe</span>
-            </div>
-          </div>
-
-          {/* Metadata Block */}
-          {metadata && (
-            <div style={{
-              fontFamily: "'Source Code Pro', monospace", fontSize: 9, color: C.textMuted,
-              marginBottom: 14, lineHeight: 1.7,
-              background: C.forest, borderRadius: 8, padding: "8px 10px",
-              border: `1px solid ${C.border}`,
-              maxHeight: 120, overflowY: "auto",
-            }}>
-              <div><span style={{ color: C.textDim }}>app</span> <span style={{ color: C.teal }}>=</span> {metadata.app}</div>
-              <div><span style={{ color: C.textDim }}>win</span> <span style={{ color: C.teal }}>=</span> {metadata.window}</div>
-              <div><span style={{ color: C.textDim }}>os</span>&nbsp; <span style={{ color: C.teal }}>=</span> {metadata.os} ({metadata.osBuild})</div>
-              <div><span style={{ color: C.textDim }}>res</span> <span style={{ color: C.teal }}>=</span> {metadata.resolution} @ {metadata.scale}</div>
-              <div><span style={{ color: C.textDim }}>cpu</span> <span style={{ color: C.teal }}>=</span> {metadata.cpu}</div>
-              <div><span style={{ color: C.textDim }}>mem</span> <span style={{ color: C.teal }}>=</span> {metadata.memoryGb}</div>
-              <div><span style={{ color: C.textDim }}>usr</span> <span style={{ color: C.teal }}>=</span> {metadata.username}@{metadata.hostname}</div>
-              <div><span style={{ color: C.textDim }}>bat</span> <span style={{ color: C.teal }}>=</span> {metadata.battery}</div>
-              {metadata.activeUrl && (
-                <div><span style={{ color: C.textDim }}>url</span> <span style={{ color: C.teal }}>=</span> {metadata.activeUrl}</div>
-              )}
-            </div>
-          )}
-
-          {/* Context Label */}
-          <div style={{
-            fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.textDim,
-            marginBottom: 6, display: "flex", alignItems: "center", gap: 4,
-          }}>
-            <span style={{ color: C.teal }}>&gt;</span> context
-          </div>
-
-          {/* Text Annotation */}
-          <textarea
-            ref={textareaRef}
-            value={annotation}
-            onChange={(e) => setAnnotation(e.target.value)}
-            placeholder="// what should your AI do with this?"
-            style={{
-              width: "100%", minHeight: 80, background: C.forest,
-              border: `1px solid ${C.border}`, borderRadius: 10,
-              padding: "8px 10px", color: C.cream, fontSize: 12,
-              fontFamily: "Verdana, Geneva, sans-serif",
-              resize: "vertical", outline: "none", boxSizing: "border-box",
-            }}
-            onFocus={(e) => e.currentTarget.style.borderColor = C.teal}
-            onBlur={(e) => e.currentTarget.style.borderColor = C.border}
-          />
-
-          {/* Voice Button */}
-          <button
-            onClick={toggleRecording}
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              marginTop: 10, padding: "8px 10px", borderRadius: 10,
-              border: `1px solid ${isRecording ? "rgba(192,70,42,0.3)" : C.border}`,
-              background: isRecording ? "rgba(192,70,42,0.08)" : C.forest,
-              cursor: "pointer", width: "100%", boxSizing: "border-box",
-            }}
-          >
-            <div style={{
-              width: 28, height: 28, borderRadius: "50%",
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              background: isRecording ? "rgba(192,70,42,0.15)" : "rgba(46,139,122,0.12)",
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isRecording ? C.sienna : C.teal} strokeWidth="2">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
-            </div>
-            <span style={{ fontSize: 12, color: C.textMuted }}>
-              {isRecording ? "Stop recording" : "Record voice note"}
-            </span>
-          </button>
-
-          {/* Transcript */}
-          {(isRecording || transcript) && (
-            <div style={{
-              marginTop: 8, padding: "8px 10px",
-              background: "rgba(46, 139, 122, 0.06)",
-              border: `1px solid rgba(46, 139, 122, 0.15)`,
-              borderRadius: 10,
-            }}>
-              <div style={{
-                fontFamily: "'Source Code Pro', monospace", fontSize: 10, color: C.teal,
-                marginBottom: 4, display: "flex", alignItems: "center", gap: 4,
-              }}>
-                {isRecording && (
-                  <div style={{ width: 6, height: 6, background: C.teal, borderRadius: "50%", animation: "pulse 1.5s infinite" }} />
-                )}
-                <span>stdout</span>
-              </div>
-              <div style={{ fontSize: 11, color: C.teal, fontStyle: "italic" }}>
-                {isRecording ? "Listening..." : `"${transcript}"`}
-              </div>
-            </div>
-          )}
-
-          <div style={{ flex: 1 }} />
-
-          {/* Credits */}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            marginBottom: 8, padding: "6px 10px",
-            background: C.forest, borderRadius: 8,
-            fontFamily: "'Source Code Pro', monospace",
-          }}>
-            <span style={{ fontSize: 10, color: C.textDim }}>this_capture</span>
-            <span style={{ fontSize: 11, color: C.amber, fontWeight: 600 }}>{captureCredits} credits</span>
-          </div>
-          <div style={{
-            textAlign: "center", fontSize: 10, color: C.textDim, marginBottom: 10,
-            fontFamily: "'Source Code Pro', monospace",
-          }}>
-            session_total <span style={{ color: C.teal }}>=</span> {sessionCredits + captureCredits}
-          </div>
-
-          {/* Send Button */}
-          <button
-            onClick={handleSubmit}
-            style={{
-              width: "100%", padding: "10px 0", background: C.teal,
-              border: "none", borderRadius: 10, color: C.cream,
-              fontSize: 13, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif",
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              letterSpacing: "0.02em",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = "#35a08c"}
-            onMouseLeave={(e) => e.currentTarget.style.background = C.teal}
-          >
-            <span>Copy to Clipboard</span>
-          </button>
-
-          {/* Keyboard Hint */}
-          <div style={{
-            textAlign: "center", marginTop: 6, fontSize: 10, color: C.textDim,
-            fontFamily: "'Source Code Pro', monospace",
-          }}>
-            &#8629; pipe it <span style={{ color: C.teal }}>|</span> esc cancel
-          </div>
-        </div>
-        </div>
-      </div>
-
-      {justCopied && (
-        <div style={{
-          position: "fixed", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "rgba(20, 30, 24, 0.96)",
-          zIndex: 100,
-          borderRadius: 14,
-          backdropFilter: "blur(4px)",
-        }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{
-              fontSize: 56, color: C.teal, fontWeight: 700, lineHeight: 1, marginBottom: 16,
-            }}>✓</div>
-            <div style={{
-              color: C.cream, fontSize: 22, fontWeight: 700, marginBottom: 6,
-              fontFamily: "Verdana, Geneva, sans-serif",
-            }}>Copied to clipboard</div>
-            <div style={{ color: C.textMuted, fontSize: 13, fontFamily: "Verdana, Geneva, sans-serif" }}>
-              Paste into ChatGPT, Claude, or any LLM.
-            </div>
-          </div>
-        </div>
+      {view}
+      {showMicModal && (
+        <MicOnboardingModal
+          onComplete={onMicOnboardComplete}
+          onSkip={onMicOnboardSkip}
+        />
       )}
-    </div>
+    </MicProvider>
   );
 }
 
-// ── Drawing tool button ──
-function ToolButton({ icon, active, onClick, title }: { icon: string; active: boolean; onClick: () => void; title: string }) {
-  const bg = active ? C.teal : C.forest;
-  const strokeColor = active ? C.cream : C.textMuted;
-
-  const renderIcon = () => {
-    switch (icon) {
-      case "pen": return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>;
-      case "rect": return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /></svg>;
-      case "arrow": return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>;
-      case "circle": return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2"><circle cx="12" cy="12" r="10" /></svg>;
-      case "text": return <span style={{ fontSize: 14, fontWeight: 700, color: strokeColor }}>T</span>;
-      case "undo": return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2"><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>;
-      case "redo": return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10" /></svg>;
-      default: return null;
-    }
-  };
-
+export default function App() {
   return (
-    <button
-      onClick={onClick}
-      title={title}
-      style={{
-        width: 32, height: 32, background: bg, borderRadius: 8,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        cursor: "pointer", border: "none", transition: "background 0.15s",
-      }}
-      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = C.border; }}
-      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = C.forest; }}
-    >
-      {renderIcon()}
-    </button>
+    <SessionProvider>
+      <AppInner />
+    </SessionProvider>
   );
 }
-
-// ── Draggable chrome bar (top of every visible card) ──
-function ChromeBar() {
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return; // left click only
-    e.preventDefault();
-    getCurrentWindow().startDragging().catch((err) => {
-      console.error("[VisionPipe] startDragging failed:", err);
-    });
-  };
-
-  const dotStyle: React.CSSProperties = {
-    width: 3, height: 3, borderRadius: "50%", background: C.textMuted, pointerEvents: "none",
-  };
-
-  return (
-    <div
-      onMouseDown={handleMouseDown}
-      style={{
-        height: 32,
-        flexShrink: 0,
-        background: C.deepForest,
-        borderBottom: `1px solid ${C.border}`,
-        display: "flex",
-        alignItems: "center",
-        cursor: "grab",
-        userSelect: "none",
-      }}
-    >
-      {/* Left: logo + wordmark */}
-      <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, pointerEvents: "none" }}>
-        <img src={logoUrl} style={{ width: 16, height: 16 }} alt="Vision|Pipe logo" />
-        <span style={{ color: C.cream, fontSize: 12, fontWeight: 600, fontFamily: "Verdana, Geneva, sans-serif" }}>Vision|Pipe</span>
-      </div>
-      {/* Center: 3 columns × 2 rows of dots, centered on the bar */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(3, 3px)",
-        gridTemplateRows: "repeat(2, 3px)",
-        gap: 3,
-        pointerEvents: "none",
-      }}>
-        <span style={dotStyle} />
-        <span style={dotStyle} />
-        <span style={dotStyle} />
-        <span style={dotStyle} />
-        <span style={dotStyle} />
-        <span style={dotStyle} />
-      </div>
-      {/* Right spacer mirrors the left flex so the grip stays centered */}
-      <div style={{ flex: 1 }} />
-    </div>
-  );
-}
-
-// ── First-launch / always-on welcome card ──
-// Shows on every launch. Content adapts to permission state:
-//   - Any missing → permission rows with fix-it buttons
-//   - All granted → usage instructions
-function Onboarding({ permissions, onRecheck, onDismiss }: {
-  permissions: PermissionStatus | null;
-  onRecheck: () => void;
-  onDismiss: () => void;
-}) {
-  const allGranted = !!(
-    permissions?.screenRecording &&
-    permissions?.systemEvents &&
-    permissions?.accessibility &&
-    permissions?.microphone &&
-    permissions?.speechRecognition
-  );
-
-  const openPane = async (pane: "screen_recording" | "automation" | "accessibility" | "microphone" | "speech_recognition") => {
-    try {
-      await invoke("open_settings_pane", { pane });
-    } catch (e) {
-      console.error("[VisionPipe] open_settings_pane failed:", e);
-    }
-  };
-
-  return (
-    <div style={{
-      width: "100vw", height: "100vh", display: "flex", alignItems: "stretch", justifyContent: "stretch",
-      background: "transparent",
-      fontFamily: "Verdana, Geneva, sans-serif",
-    }}>
-      <div style={{
-        display: "flex", flexDirection: "column", flex: 1, borderRadius: 14, overflow: "hidden",
-        border: `1px solid ${C.border}`, background: C.forest,
-        boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(46, 139, 122, 0.1)",
-      }}>
-        <ChromeBar />
-        <div style={{ flex: 1, padding: 24, overflowY: "auto", color: C.cream }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Welcome to Vision|Pipe</h1>
-          <p style={{ margin: "4px 0 0 0", color: C.amber, fontSize: 14, fontWeight: 700 }}>
-            Give your LLM eyes.
-          </p>
-
-          {!allGranted ? (
-            <>
-              <p style={{ marginTop: 8, marginBottom: 16, color: C.textMuted, fontSize: 13 }}>
-                Grant the permissions below and you'll be ready to capture. The first three are required; microphone + speech recognition are only needed for voice notes.
-              </p>
-              <PermissionRow
-                granted={!!permissions?.screenRecording}
-                label="Screen Recording"
-                description="Required to capture screenshots. If Vision|Pipe isn't already in the list, click the + button and add Vision|Pipe from your Applications folder, then toggle it on."
-                onOpen={() => openPane("screen_recording")}
-                onRecheck={onRecheck}
-              />
-              <PermissionRow
-                granted={!!permissions?.systemEvents}
-                label="Automation: System Events"
-                description="Lets Vision|Pipe read the active app and window so it can include them as metadata in captures. Found under System Settings → Privacy & Security → Automation."
-                onOpen={() => openPane("automation")}
-                onRecheck={onRecheck}
-              />
-              <PermissionRow
-                granted={!!permissions?.accessibility}
-                label="Accessibility"
-                description="Required so the ⌘⇧C global shortcut works system-wide. Found under System Settings → Privacy & Security → Accessibility. Click + to add Vision|Pipe if it's not listed."
-                onOpen={() => openPane("accessibility")}
-                onRecheck={onRecheck}
-              />
-              <PermissionRow
-                granted={!!permissions?.microphone}
-                label="Microphone"
-                description="Optional — enables voice notes attached to your captures. Click Allow when macOS asks."
-                onOpen={() => openPane("microphone")}
-                onRecheck={onRecheck}
-              />
-              <PermissionRow
-                granted={!!permissions?.speechRecognition}
-                label="Speech Recognition"
-                description="Optional — enables on-device transcription of your voice notes. Nothing leaves your Mac."
-                onOpen={() => openPane("speech_recognition")}
-                onRecheck={onRecheck}
-              />
-            </>
-          ) : (
-            <>
-              <p style={{ marginTop: 16, marginBottom: 4, color: C.teal, fontSize: 13, fontWeight: 600 }}>
-                ✓ You're all set.
-              </p>
-              <p style={{ marginTop: 0, marginBottom: 16, color: C.textMuted, fontSize: 13 }}>
-                All permissions are granted. Here's how to use Vision|Pipe:
-              </p>
-
-              <div style={{
-                marginTop: 12, marginBottom: 16, padding: 12, borderRadius: 6,
-                background: C.deepForest, border: `1px solid ${C.amber}`,
-                fontSize: 12, color: C.cream, lineHeight: 1.55,
-              }}>
-                <div style={{ color: C.amber, fontWeight: 700, marginBottom: 6, fontSize: 13 }}>
-                  ⚠ Heads up — macOS will ask you a couple more times
-                </div>
-                <div style={{ color: C.textMuted, marginBottom: 6 }}>
-                  These show up the first time you capture. Both are normal — click <strong style={{ color: C.cream }}>Allow</strong>:
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 18, color: C.textMuted }}>
-                  <li><strong style={{ color: C.cream }}>"Bypass the system private window picker"</strong> — macOS Sonoma+ adds an extra consent layer for direct screen capture. This is what lets ⌘⇧C grab a region instantly without opening Apple's picker UI.</li>
-                  <li><strong style={{ color: C.cream }}>"Control [Safari / Chrome / Firefox / etc.]"</strong> — only fires when you capture from a browser. It's how Vision|Pipe reads the active URL to include in metadata. Skipping this just leaves the URL out.</li>
-                </ul>
-              </div>
-
-              <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 8 }}>How to use:</div>
-              <ul style={{ margin: 0, paddingLeft: 20, color: C.cream, fontSize: 13, lineHeight: 1.8 }}>
-                <li>Press <KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>C</KbdKey> anywhere to start a capture.</li>
-                <li>Drag to select a region, or press <KbdKey>Enter</KbdKey> for a fullscreen capture.</li>
-                <li>Press <KbdKey>Esc</KbdKey> to cancel.</li>
-                <li>Add an annotation, then click <strong style={{ color: C.amber }}>Pipe it</strong> to copy a markdown-ready capture to your clipboard.</li>
-                <li>Paste into ChatGPT, Claude, Gemini, or any LLM that accepts images + text.</li>
-              </ul>
-
-              <div style={{ marginTop: 16, fontSize: 12, color: C.textDim }}>
-                Re-open this welcome from the menu bar tray icon → <em>Show Onboarding…</em>
-              </div>
-
-              <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-                <button
-                  onClick={onDismiss}
-                  style={{
-                    background: C.teal, color: C.cream, border: "none",
-                    padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
-                  }}
-                >Got it</button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Small inline keyboard-key style ──
-function KbdKey({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd style={{
-      display: "inline-block",
-      padding: "1px 6px",
-      margin: "0 2px",
-      fontFamily: "'Source Code Pro', monospace",
-      fontSize: 11,
-      color: C.cream,
-      background: C.deepForest,
-      border: `1px solid ${C.border}`,
-      borderRadius: 4,
-      verticalAlign: "baseline",
-    }}>{children}</kbd>
-  );
-}
-
-// ── Single permission row inside Onboarding ──
-function PermissionRow({ granted, label, description, onOpen, onRecheck }: {
-  granted: boolean;
-  label: string;
-  description: string;
-  onOpen: () => void;
-  onRecheck: () => Promise<void> | void;
-}) {
-  const [checking, setChecking] = useState(false);
-
-  const handleRecheck = async () => {
-    setChecking(true);
-    try {
-      await onRecheck();
-    } finally {
-      // Keep "Checking…" visible long enough for the user to notice
-      setTimeout(() => setChecking(false), 400);
-    }
-  };
-
-  return (
-    <div style={{
-      border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginBottom: 12,
-      background: C.deepForest,
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <span style={{
-          color: granted ? C.teal : C.sienna, fontWeight: 700, fontSize: 16, width: 16, textAlign: "center",
-        }}>{granted ? "✓" : "✗"}</span>
-        <span style={{ color: C.cream, fontWeight: 600, fontSize: 14 }}>{label}</span>
-      </div>
-      <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 8, marginLeft: 24 }}>{description}</div>
-      <div style={{ display: "flex", gap: 8, marginLeft: 24, alignItems: "center" }}>
-        <button
-          onClick={onOpen}
-          style={{
-            background: C.teal, color: C.cream, border: "none",
-            padding: "6px 12px", borderRadius: 4, fontSize: 12, cursor: "pointer", fontWeight: 600,
-          }}
-        >Open System Settings</button>
-        <button
-          onClick={handleRecheck}
-          disabled={checking}
-          style={{
-            background: checking ? C.deepForest : "transparent",
-            color: checking ? C.amber : C.textMuted,
-            border: `1px solid ${checking ? C.amber : C.border}`,
-            padding: "6px 12px", borderRadius: 4, fontSize: 12,
-            cursor: checking ? "default" : "pointer",
-            fontWeight: checking ? 600 : 400,
-            transition: "all 150ms ease",
-            opacity: checking ? 0.9 : 1,
-          }}
-        >{checking ? "Checking…" : "Re-check"}</button>
-      </div>
-    </div>
-  );
-}
-
-export default App;

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-conf-schema/main/schema.json",
   "productName": "VisionPipe",
-  "version": "0.3.2",
+  "version": "0.6.1",
   "identifier": "com.visionpipe.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -19,8 +19,10 @@
         "height": 460,
         "resizable": true,
         "visible": false,
-        "decorations": false,
-        "transparent": true
+        "decorations": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "trayIcon": {
@@ -28,7 +30,11 @@
       "iconAsTemplate": false
     },
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$PICTURE/VisionPipe/**"]
+      }
     }
   },
   "plugins": {},
