@@ -4,6 +4,20 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-04 17:30 PDT — v0.6.1
+
+### Summary of changes since last update
+Wrote the full implementation plan from the design spec. Plan breaks the work into nine tasks covering Rust impl (replace credits.rs + persistence wiring + four Tauri commands), TDD-driven CreditProvider context with seven Vitest tests, Header chip, Copy & Send guard, and a manual smoke test runbook from the spec. Plan is committed before implementation begins so the history shows it as a discrete artifact.
+
+### Detail of changes made:
+- **`docs/superpowers/plans/2026-05-04-credit-pricing-redesign.md`** (new): 9-task implementation plan with concrete code in every step, exact file paths, run commands with expected output, and a commit script per task. Includes self-review notes confirming spec coverage and type-name consistency between Rust (`BundleCost { screenshots, annotations, audio, total }`) and TypeScript (same shape, camelCase method `deductForBundle` calling snake_case `deduct_for_bundle` Tauri command).
+- Plan deliberately groups Tasks 1+2+3 under one Rust commit (Task 4) and Tasks 5-9 under one frontend commit so the branch stays at two logical commits for the implementation, plus this plan-creation commit. The commits-per-task pattern (one commit per step) was rejected here because the changes are tightly coupled — splitting them produces unbuildable intermediate states.
+
+### Potential concerns to address:
+- Plan's manual smoke test (Task 9, Steps 2-4) requires user interaction with the desktop (taking screenshots, recording audio, restarting the app). The autonomous implementation pass cannot execute those steps; the user runs them when they're back. The plan's automated checks (cargo test, pnpm test, tsc, dev-server launch) ARE executable autonomously and will run.
+
+---
+
 ## Progress Update as of 2026-05-04 17:00 PDT — v0.6.1
 
 ### Summary of changes since last update
