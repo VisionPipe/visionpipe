@@ -4,6 +4,22 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-04 17:30 PDT — v0.6.1 (Rust impl)
+
+### Summary of changes since last update
+Implemented the Rust side of the credit pricing redesign. Replaced the cherry-picked CaptureJob/calculate_cost (pixel-based, per-capture) with BundleCost/calculate_bundle_cost (per-bundle: 1 credit per screenshot, 1 per dormant annotation, 10s-free audio tier then 1 credit per additional 10s). Added four Tauri commands backed by `tauri-plugin-store`. 16 unit tests pass; cargo build is clean.
+
+### Detail of changes made:
+- **`src-tauri/src/credits.rs`**: Full rewrite. `BundleCost { screenshots, annotations, audio, total }` with `calculate_bundle_cost(screenshot_count, annotation_count, audio_seconds)`. Audio formula: `if seconds <= 10 { 0 } else { (seconds - 10).div_ceil(10) }`. The `annotations` field stays in the model (calculator just sums whatever the caller passes) so re-enabling the annotation feature is a one-line caller change. `CreditLedger.deduct(&BundleCost) -> Result<u64, InsufficientCredits>` deducts `cost.total` and returns the new balance. 16 inline tests cover audio tiers (0/10/11/20/21/47/120s), screenshot composition, dormant-annotation correctness, three worked spec examples, and three deduction cases.
+- **`src-tauri/src/lib.rs`**: Added `use tauri_plugin_store::StoreExt`. Added `CREDIT_STORE_FILE = "visionpipe.json"` and `CREDIT_BALANCE_KEY = "credit_balance"` constants plus `load_balance(app)` (returns 0 for fresh installs) and `save_balance(app, balance)` helpers. Registered `tauri_plugin_store::Builder::new().build()` in the plugin chain (the dependency itself was already added in cherry-pick `79c399d`). `setup` closure now loads the persisted balance and `app.manage(Mutex::new(credits::CreditLedger::new(initial_balance)))`. Four new `#[tauri::command]` handlers: `get_credit_balance` (read), `add_credits` (saturating add + persist), `preview_bundle_cost` (pure calc, no mutation), `deduct_for_bundle` (calculate + deduct + persist; returns Err on insufficient balance). All four registered in the `invoke_handler` macro.
+
+### Potential concerns to address:
+- **Default balance is 0** — this means a fresh-install user can't send a bundle until they call `add_credits` (currently only via devtools console or future Buy Credits UI). Spec calls for prominent "Buy Credits" UI on first run; that comes when the backend exists.
+- **`closingNarration` audio is invisible to the calculator.** The frontend can't derive its duration from the type model — flagged for follow-up. Direction is user-friendly (we under-charge, never over-charge).
+- **No frontend wiring yet** — these commands compile and respond but nothing in the UI calls them. Tasks 5-9 hook them in.
+
+---
+
 ## Progress Update as of 2026-05-04 17:30 PDT — v0.6.1
 
 ### Summary of changes since last update

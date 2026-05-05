@@ -4,6 +4,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
+use tauri_plugin_store::StoreExt;
 
 mod audio;
 mod capture;
@@ -14,6 +15,29 @@ mod permissions;
 mod session;
 mod speech;
 mod credits;
+
+/// File the credit balance is persisted to via tauri-plugin-store.
+const CREDIT_STORE_FILE: &str = "visionpipe.json";
+/// Key inside the store JSON.
+const CREDIT_BALANCE_KEY: &str = "credit_balance";
+
+/// Read the persisted balance, defaulting to 0 for fresh installs.
+/// Default is intentionally 0 (NOT 1,000,000 like the old branch did).
+fn load_balance(app: &AppHandle) -> u64 {
+    app.store(CREDIT_STORE_FILE)
+        .ok()
+        .and_then(|s| s.get(CREDIT_BALANCE_KEY))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+/// Persist the balance to the store. Best-effort; logs errors.
+fn save_balance(app: &AppHandle, balance: u64) -> Result<(), String> {
+    let store = app.store(CREDIT_STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(CREDIT_BALANCE_KEY, serde_json::Value::from(balance));
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 /// Shared state mapping tray-menu ID `session_<N>` → session folder path on
 /// disk. Updated whenever we rebuild the tray menu (on launch + after each
@@ -687,6 +711,65 @@ async fn save_hotkey_config(cfg: hotkey_config::HotkeyConfig) -> Result<(), Stri
     hotkey_config::save(&cfg)
 }
 
+/// Read current credit balance from the in-memory ledger.
+#[tauri::command]
+async fn get_credit_balance(
+    ledger: tauri::State<'_, Mutex<credits::CreditLedger>>,
+) -> Result<u64, String> {
+    let l = ledger.lock().map_err(|e| e.to_string())?;
+    Ok(l.balance)
+}
+
+/// Add credits (purchases, dev top-ups). Persists immediately.
+#[tauri::command]
+async fn add_credits(
+    app: AppHandle,
+    ledger: tauri::State<'_, Mutex<credits::CreditLedger>>,
+    amount: u64,
+) -> Result<u64, String> {
+    let new_balance = {
+        let mut l = ledger.lock().map_err(|e| e.to_string())?;
+        l.balance = l.balance.saturating_add(amount);
+        l.balance
+    };
+    save_balance(&app, new_balance)?;
+    Ok(new_balance)
+}
+
+/// Pure preview of the bundle cost — no state mutation. Called by the
+/// frontend whenever session state changes (debounced) so the header chip
+/// can show "Cost: N" live.
+#[tauri::command]
+async fn preview_bundle_cost(
+    screenshots: u64,
+    annotations: u64,
+    audio_seconds: u64,
+) -> Result<credits::BundleCost, String> {
+    Ok(credits::calculate_bundle_cost(screenshots, annotations, audio_seconds))
+}
+
+/// Calculate cost, deduct from the ledger, persist. Called once on
+/// Copy & Send. Returns the deducted cost on success or an error string
+/// on insufficient balance — caller MUST abort the side effect (clipboard
+/// write) on Err.
+#[tauri::command]
+async fn deduct_for_bundle(
+    app: AppHandle,
+    ledger: tauri::State<'_, Mutex<credits::CreditLedger>>,
+    screenshots: u64,
+    annotations: u64,
+    audio_seconds: u64,
+) -> Result<credits::BundleCost, String> {
+    let cost = credits::calculate_bundle_cost(screenshots, annotations, audio_seconds);
+    let new_balance = {
+        let mut l = ledger.lock().map_err(|e| e.to_string())?;
+        l.deduct(&cost).map_err(|e| e.to_string())?;
+        l.balance
+    };
+    save_balance(&app, new_balance)?;
+    Ok(cost)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Default log level: info. Override with VISIONPIPE_LOG_LEVEL=debug
@@ -720,6 +803,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
             // System tray with menu (Show Onboarding, Quit)
             let show_onboarding = MenuItem::with_id(
@@ -739,6 +823,11 @@ pub fn run() {
             // path (hotkey, tray, in-app "+") BEFORE VP takes focus.
             // Drained by the next get_metadata invocation.
             app.manage(StashedMetadata(Mutex::new(None)));
+            // Credit ledger: load persisted balance from tauri-plugin-store
+            // (key: "credit_balance" in visionpipe.json), default 0.
+            let initial_balance = load_balance(app.handle());
+            app.manage(Mutex::new(credits::CreditLedger::new(initial_balance)));
+            log::info!("[VisionPipe] Loaded credit balance: {}", initial_balance);
             let initial_recents = list_recent_sessions(10);
             if let Some(state) = app.try_state::<RecentSessionsState>() {
                 if let Ok(mut paths) = state.0.lock() {
@@ -971,6 +1060,10 @@ pub fn run() {
             reveal_in_finder,
             read_session_file,
             refresh_tray,
+            get_credit_balance,
+            add_credits,
+            preview_bundle_cost,
+            deduct_for_bundle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
