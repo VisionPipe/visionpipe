@@ -4,6 +4,27 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-04 17:00 PDT — v0.6.1
+
+### Summary of changes since last update
+Brainstormed and committed the redesigned credit pricing model in a new design spec. Pricing is now per-screenshot + per-annotation (dormant) + tiered per-second-of-audio with a 10s free tier, replacing the obsolete per-capture pixel-based model from the old branch. Cost is computed live during a session and deducted only at Copy & Send. No code changes yet — implementation plan comes next.
+
+### Detail of changes made:
+- **`docs/superpowers/specs/2026-05-04-credit-pricing-redesign.md`** (new, 200+ lines): Full design spec. Pricing rules: 1 credit per screenshot, 1 credit per annotation (dormant — annotation feature was removed in commit `da1c132`), audio is `ceil(max(0, seconds - 10) / 10)`, 1 credit = $0.01. Spec covers worked examples, Deepgram cost-coverage check (~5x margin even worst-case), code-shape changes (replace per-capture `CaptureJob` with per-bundle `BundleCost`), Tauri command surface (`get_credit_balance`, `preview_bundle_cost`, `deduct_for_bundle`, `add_credits`), frontend integration (new `src/state/credit-context.tsx`, header chip, Copy & Send guard), test plan (Rust unit + Vitest + manual smoke), and rollout (default balance 0 for fresh installs, dev `add_credits` shortcut, Stripe/server-sync deferred until backend exists).
+- **Brainstorming decisions captured in the spec:**
+  - Audio billed at 1 credit / 10s with first 10s free (avoids charging for accidental clicks; still ~5x margin over Deepgram cost).
+  - Cost basis = bundle at send time (deleted screenshots and re-recorded audio segments don't double-charge).
+  - Annotation line item kept dormant in `BundleCost` so it activates trivially when/if annotation returns to the product.
+  - Live in-session preview via `preview_bundle_cost` IPC; deduction only fires on Copy & Send.
+  - Default fresh-install balance: 0 (the old branch's testing default of 1,000,000 is not carried forward).
+
+### Potential concerns to address:
+- **Implementation plan still needed.** The spec is approved-design but no code has changed. Next step is invoking `superpowers:writing-plans` to break the spec into executable tasks (replace `CaptureJob`/`calculate_cost` with `BundleCost`/`calculate_bundle_cost`, swap the 10 obsolete pixel-based unit tests, add the three new Tauri commands, build `credit-context.tsx`, wire header chip + Copy & Send guard).
+- **`preview_bundle_cost` is small but called frequently** (debounced on every session change). If IPC overhead becomes visible, the fallback is a pure-JS duplicate of the formula — but two implementations to keep in sync. Spec recommends starting with the IPC version and only duplicating if measured.
+- **`Header.tsx` and `Footer.tsx` changes** need to land in the same PR as the credit-context wiring; otherwise the live cost preview won't render and the design's UX premise (see-the-cost-grow-as-you-capture) fails the manual smoke test.
+
+---
+
 ## Progress Update as of 2026-05-04 16:45 PDT — v0.6.1
 
 ### Summary of changes since last update
