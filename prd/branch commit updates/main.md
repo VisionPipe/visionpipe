@@ -4,6 +4,30 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 12:27 PDT — v0.8.1
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.8.1 — critical fix for "Cannot send: invalid args audioSeconds" Copy/Send failure introduced in v0.7.0, plus rename of "New Screenshot Bundle" → "Multi-Screenshot Bundle" with a new stacked-images icon to signify the feature handles multiple shots.
+
+### Detail of changes made:
+
+- **Bug fix: `Cannot send: invalid args 'audioSeconds' for command 'deduct_for_bundle'`**. The credit context was passing `audio_seconds:` (snake_case) to `invoke()`, but Tauri v2 auto-converts camelCase JS keys to snake_case Rust params on its own — so it was looking for a non-existent `audio_seconds` JS key and reporting the camelCase `audioSeconds` it expected as missing. Fix: pass `audioSeconds` (camelCase) in both `preview_bundle_cost` and `deduct_for_bundle` invocations from `src/state/credit-context.tsx`. This bug existed in v0.7.0 and v0.8.0 — every Copy & Send / Copy to Clipboard click failed with the cryptic error message. v0.8.1 is the first build in which the credit deduction actually completes.
+
+- **"New Screenshot Bundle" → "Multi-Screenshot Bundle"** on the HistoryHub primary CTA. Clearer name; the feature has always supported N screenshots in a single bundle and the old "New Screenshot" wording understated that.
+
+- **Camera icon → Images icon** (lucide-react `<Images />` — two stacked image rectangles) on the same button. Visually signals "more than one" instead of suggesting a single capture.
+
+### Potential concerns to address:
+
+- **Existing v0.7.0 / v0.8.0 installs still hit the bug.** Users need to update to v0.8.1 (homebrew users: `brew upgrade --cask visionpipe`; manual: re-download from the website or GitHub releases) before Copy/Send works.
+- The bug went undetected in v0.7.0 because the React-rendering integration tests for `CreditProvider` were dropped (vitest+jsdom hung), so the IPC payload shape was never asserted in CI. Worth adding a small "verify IPC keys round-trip" test once the rendering issue is investigated.
+
+---
+
+
 ## Progress Update as of 2026-05-06 12:23 PDT — v0.8.0
 *(Most recent updates at top)*
 

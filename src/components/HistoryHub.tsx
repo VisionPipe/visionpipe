@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { Camera, Folder, Clipboard, ChevronRight, ChevronDown } from "lucide-react";
+import { Images, Folder, Clipboard, ChevronRight, ChevronDown } from "lucide-react";
 import { C, FONT_BODY } from "../lib/ui-tokens";
 import { HotkeyPill } from "./HotkeyPill";
 
@@ -158,8 +158,8 @@ export function HistoryHub() {
             fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600,
           }}
         >
-          <Camera size={18} />
-          New Screenshot Bundle
+          <Images size={18} />
+          Multi-Screenshot Bundle
         </button>
         <div style={{ marginTop: 8, fontSize: 11, color: C.textDim, display: "flex", alignItems: "center", gap: 6 }}>
           <span>or press</span>

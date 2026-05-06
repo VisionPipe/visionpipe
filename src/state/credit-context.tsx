@@ -61,10 +61,14 @@ export function CreditProvider({ children }: { children: ReactNode }) {
       return;
     }
     const handle = setTimeout(() => {
+      // Tauri v2 auto-converts camelCase JS keys to snake_case Rust
+      // params. Sending `audio_seconds` here makes Tauri look for a
+      // (non-existent) `audio_seconds` Rust param and emit
+      // "missing required key audioSeconds". Always pass camelCase.
       invoke<BundleCost>("preview_bundle_cost", {
         screenshots: screenshotCount,
         annotations: 0, // dormant — annotation feature is removed; see spec
-        audio_seconds: audioSeconds,
+        audioSeconds,
       })
         .then(setCurrentBundleCost)
         .catch((err) => console.error("[VisionPipe] preview_bundle_cost failed:", err));
@@ -76,7 +80,7 @@ export function CreditProvider({ children }: { children: ReactNode }) {
     const cost = await invoke<BundleCost>("deduct_for_bundle", {
       screenshots: screenshotCount,
       annotations: 0,
-      audio_seconds: audioSeconds,
+      audioSeconds,
     });
     // Refresh balance from backend (single source of truth).
     await refresh();
