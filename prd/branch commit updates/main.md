@@ -4,6 +4,35 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 12:18 PDT — v0.7.0
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.7.0 — credit pricing system, descriptive bundle filenames, hotkey pill, mic-permission deadlock fix.
+
+### Detail of changes made:
+
+- **Credit pricing system**. Replaces the dormant pixel-based capture-cost calculator with a per-bundle model: 1 credit per screenshot, 1 per dormant annotation slot, audio at 10s-free / 1 credit per additional 10s. New `BundleCost` struct + four Tauri commands (`get_credit_balance`, `add_credits`, `preview_bundle_cost`, `deduct_for_bundle`) backed by `tauri-plugin-store` persistence (default fresh-install balance: 0). New `CreditProvider` context drives a header chip showing `Cost: N · Balance: M` (amber when insufficient), and `Copy & Send` is gated on `deduct_for_bundle` so the user can never get the bundle without paying or pay without getting it. Spec: `docs/superpowers/specs/2026-05-04-credit-pricing-redesign.md`.
+
+- **Descriptive markdown bundle filenames**. Replaces hardcoded `transcript.md` with `VisionPipe-{YYYY-MM-DD-HHmm}-{N}shots-{topic}.md`. Topic falls back through caption → URL path → window title → app name, capped at 180 chars. Backwards-compatible: `HistoryHub` finds any `VisionPipe-*.md` (most recent mtime) and falls back to legacy `transcript.md` for older sessions.
+
+- **Single orange clickable hotkey pill** in Onboarding and HistoryHub, replacing the three separate ⌘ ⇧ C boxes. Click opens `SettingsPanel` for rebinding; the displayed combo refreshes when the panel closes. New `formatHotkey` helper handles glyph mapping for Cmd/Shift/Alt/Ctrl/Enter/Tab/Escape/Space/Backspace plus single-letter uppercase normalization.
+
+- **Tighter window sizing**. Onboarding window auto-shrinks from 680→360 px in the all-granted state. HistoryHub window range tightened from 640-900 to 420-720 px. Removes the wall of empty deep-forest space below short content in both views.
+
+- **Bug fix: mic/speech permission flow stuck on "Asking macOS…"**. The ObjC FFI used `dispatch_semaphore_wait` to block the calling thread, deadlocking against `SFSpeechRecognizer`'s main-queue completion handler. Fix: cached-status short-circuit + `tauri::async_runtime::spawn_blocking` so the blocking is on the blocking pool, not a runtime worker + new `AuthOutcome::TimedOut` that surfaces a red error banner with a one-click "Open System Settings →" button instead of silently treating timeout as denial. Bumped timeout from 30s to 60s.
+
+### Potential concerns to address:
+
+- `Session.closingNarration` (audio recorded after the last screenshot) has no `AudioOffset` in the type model, so it isn't counted in the credit cost. User-friendly direction (we under-charge); flagged for follow-up.
+- `add_credits` has no UI yet — devtools console only, until the Buy Credits flow ships against the future `api.visionpipe.ai` backend.
+- React-rendering integration tests for `CreditProvider` were dropped (vitest+jsdom hung on the provider chain). Pure-helper coverage (`audio-duration`, `bundle-name`, `formatHotkey`) replaces them; the IPC wiring is verified manually.
+
+---
+
+
 ## Progress Update as of 2026-05-02 19:24 PDT — v0.3.2
 *(Most recent updates at top)*
 
