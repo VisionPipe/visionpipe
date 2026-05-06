@@ -4,6 +4,30 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 15:12 PDT — v0.9.5
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.9.5 — fixes two bugs that turned up in a user diagnostic-bundle dump: (1) `window.confirm()` calls have been silently failing since v0.8.0 because the dialog plugin's `confirm` ACL wasn't allowed (the Cancel button + Delete Screenshot prompts never appeared), (2) opening Settings then closing it could leave the app with NO global hotkeys until restart because a single failed re-registration aborted the whole sequence.
+
+### Detail of changes made:
+
+- **`src-tauri/capabilities/default.json`**: added `dialog:allow-confirm`, `dialog:allow-message`, `dialog:allow-ask` alongside the existing `dialog:allow-save`. Tauri 2 routes `window.confirm()` / `window.alert()` / `window.prompt()` through `plugin:dialog` for native-feel dialogs; without the corresponding `allow-*` capabilities each call rejected with `Command plugin:dialog|confirm not allowed by ACL`. Visible in the user's log as 4 separate failures across the v0.8.x → v0.9.4 lifetime, each one a Cancel-session or Delete-Screenshot click that should have prompted but did nothing. The four allow-* together cover all three browser-builtin dialog APIs.
+
+- **`src-tauri/src/lib.rs register_global_shortcuts`**: was strict-fail — the first `on_shortcut` call that errored bailed the entire function, leaving the app with NO global hotkeys until restart. The user's log captured this happening to Cmd+Shift+O after a Settings rebind: pause_global_shortcuts unregistered everything, resume_global_shortcuts retried registering Cmd+Shift+O first, that errored ("RegisterEventHotKey failed for KeyO" — likely transient OS-level state from the unregister), and the capture combo (Cmd+Shift+C) + scroll combo (Cmd+Shift+S) were never even attempted. Now each of the three registrations is independent: a failure on one logs a warning + continues to the next. Plus a defensive `unregister_all()` at the start of register_global_shortcuts to guard against partial-pause ghost state.
+
+### Potential concerns to address:
+
+- The defensive `unregister_all()` runs even on first-launch setup() where it's a no-op. Cheap; not worth gating.
+- If Cmd+Shift+O fails to register because some OTHER app has claimed it, the user can no longer use that shortcut to re-open the welcome card. Tray menu → "Show Onboarding…" is the alternative; surface this in a future release if it becomes a frequent issue.
+- We're not yet retrying with backoff after a failed register. Adding that would handle the transient-OS-state case properly. For now, the user can close + reopen Settings to retry; if the failure is persistent (another app holds the combo), no amount of retry helps.
+- `--skip-web` again because `visionpipe-web` is still on `update-website-copy-2026-05-04`.
+
+---
+
+
 ## Progress Update as of 2026-05-06 14:50 PDT — capabilities.json schema regen for v0.9.5
 
 ### Summary of changes since last update
