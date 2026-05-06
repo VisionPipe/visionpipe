@@ -4,6 +4,31 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:37 PDT — v0.9.2
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.9.2 — capture overlay matches native macOS Cmd+Shift+4 behavior: crosshair-only on initial press (no full-screen darkening), traffic-light controls hidden during capture, and dimming kicks in only OUTSIDE the selection rectangle once dragging starts.
+
+### Detail of changes made:
+
+- **`src/components/SelectionOverlay.tsx` — no dim until drag.** Dropped the always-on `background: "rgba(0,0,0,0.2)"` fullscreen overlay. The container is now `background: "transparent"` until the user mousedowns. Once a selection exists, four absolutely-positioned dim rectangles (`rgba(0,0,0,0.45)`) render around the selection (top / bottom / left / right of the selection rect), with the selection itself remaining fully transparent so the user can see exactly what will be captured. Mirrors native macOS screenshot UX.
+
+- **`src/components/SelectionOverlay.tsx` — no traffic-light controls during capture.** New `useEffect` that calls `getCurrentWindow().setDecorations(false)` on mount and `setDecorations(true)` on unmount. The macOS red/yellow/green window controls disappear while the capture overlay is visible and come back on the main HistoryHub / SessionWindow surfaces.
+
+- The hint pill at top center of the overlay ("Drag a region · Enter for fullscreen · Esc to cancel") gets `pointer-events: none` so it doesn't intercept clicks.
+
+### Potential concerns to address:
+
+- `setDecorations(false)` toggling assumes nothing else concurrently modifies decoration state. If a future feature also wants to toggle, switch to a "decoration suspended" counter rather than a boolean.
+- The 0.45 alpha for dimming was picked by feel; native macOS uses something close. Tunable later.
+- This release is `--skip-web` again because `visionpipe-web` is still on `update-website-copy-2026-05-04`. Website download button stays at v0.6.1 until that branch merges.
+
+---
+
+
 ## Progress Update as of 2026-05-06 13:35 PDT — capture overlay UX
 
 ### Summary of changes since last update
