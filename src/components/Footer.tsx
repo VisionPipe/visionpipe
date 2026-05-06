@@ -50,9 +50,14 @@ export function Footer({ onCopyAndSend, onCancel, onSaveToDisk, copyTooltip, bus
         title={copyTooltip}
         style={{
           display: "flex", alignItems: "center", gap: 8,
-          background: C.teal, border: "none",
+          // Visually de-emphasise the disabled state and use the
+          // not-allowed (slashed-circle) cursor instead of `wait` (which
+          // renders as a spinner on macOS — users misread the disabled
+          // state as "thinking" / "in progress").
+          background: busy ? "rgba(46,139,122,0.4)" : C.teal,
+          border: "none",
           color: C.deepForest, padding: "8px 18px", borderRadius: 6,
-          cursor: busy ? "wait" : "pointer", fontSize: 13, fontWeight: 700,
+          cursor: busy ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700,
         }}
       >
         <Clipboard size={14} strokeWidth={2.5} />

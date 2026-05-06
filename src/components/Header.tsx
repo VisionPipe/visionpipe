@@ -1,3 +1,5 @@
+import { useState, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useSession } from "../state/session-context";
 import { useCredit } from "../state/credit-context";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
@@ -126,18 +128,102 @@ function CreditChip() {
   );
 }
 
-function OverflowMenu({ onNewSession, onOpenFolder, onOpenSettings }: {
+/**
+ * Real dropdown menu, replacing the prior `window.prompt`-based stub
+ * (which on some macOS / Tauri webview combinations silently dropped
+ * the prompt — the user clicked ⋮ and saw nothing happen). Opens on
+ * click, closes on (a) item selection, (b) outside click, or (c)
+ * Escape.
+ */
+function OverflowMenu({
+  onNewSession, onOpenFolder, onOpenSettings,
+}: {
   onNewSession: () => void; onOpenFolder: () => void; onOpenSettings: () => void;
 }) {
-  const handle = () => {
-    const choice = window.prompt(
-      "Choose: 1) New session  2) Open session folder  3) Settings  (1/2/3)",
-      ""
-    );
-    if (choice === "1") onNewSession();
-    else if (choice === "2") onOpenFolder();
-    else if (choice === "3") onOpenSettings();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const select = (action: () => void) => {
+    setOpen(false);
+    action();
   };
-  // Replace with a real popover menu in a follow-on polish pass; v0.2 ships with this minimal prompt-based menu.
-  return <button onClick={handle} style={btnStyle()}>⋮</button>;
+
+  const revealLogs = async () => {
+    try {
+      await invoke("reveal_logs_in_finder");
+    } catch (err) {
+      console.warn("[VisionPipe] reveal_logs_in_finder failed:", err);
+    }
+  };
+
+  const saveDiagnostic = async () => {
+    try {
+      await invoke("save_diagnostic_bundle");
+    } catch (err) {
+      console.warn("[VisionPipe] save_diagnostic_bundle failed:", err);
+    }
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: "relative" }}>
+      <button onClick={() => setOpen((o) => !o)} style={btnStyle()} title="More actions">⋮</button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1500,
+            background: C.deepForest, border: `1px solid ${C.borderLight}`,
+            borderRadius: 6, padding: 4, minWidth: 200,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            display: "flex", flexDirection: "column",
+          }}
+        >
+          <MenuItem onSelect={() => select(onNewSession)}>New session</MenuItem>
+          <MenuItem onSelect={() => select(onOpenFolder)}>Open session folder</MenuItem>
+          <MenuDivider />
+          <MenuItem onSelect={() => select(onOpenSettings)}>Settings…</MenuItem>
+          <MenuDivider />
+          <MenuItem onSelect={() => select(revealLogs)}>Reveal logs in Finder…</MenuItem>
+          <MenuItem onSelect={() => select(saveDiagnostic)}>Save diagnostic bundle…</MenuItem>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ children, onSelect }: { children: React.ReactNode; onSelect: () => void }) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onSelect}
+      style={{
+        background: "transparent", border: "none", color: C.textBright,
+        textAlign: "left", padding: "8px 10px", borderRadius: 4,
+        cursor: "pointer", fontFamily: FONT_BODY, fontSize: 13,
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = C.forest; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MenuDivider() {
+  return <div style={{ height: 1, background: C.border, margin: "2px 0" }} />;
 }

@@ -55,11 +55,13 @@ ok()   { printf '\033[1;32m✓ %s\033[0m\n' "$1"; }
 # --- parse args --------------------------------------------------------------
 
 BUMP_TYPE="patch"
+SKIP_WEB=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --bump=*) BUMP_TYPE="${1#*=}"; shift ;;
-    --bump)   BUMP_TYPE="${2:-patch}"; shift 2 ;;
-    *)        shift ;;
+    --bump=*)    BUMP_TYPE="${1#*=}"; shift ;;
+    --bump)      BUMP_TYPE="${2:-patch}"; shift 2 ;;
+    --skip-web)  SKIP_WEB=1; shift ;;
+    *)           shift ;;
   esac
 done
 
@@ -101,13 +103,22 @@ fi
 
 # 2. visionpipe-web — must exist and be on main, otherwise the new DMG commit
 #    lands on a feature branch and the public Download button stays stale.
+#    Override with --skip-web for hot-fixes while a website rewrite is mid-flight.
 [ -d "$WEB_PROJECT" ] || fail "visionpipe-web project not found at $WEB_PROJECT"
-WEB_BRANCH=$(git -C "$WEB_PROJECT" rev-parse --abbrev-ref HEAD)
-if [ "$WEB_BRANCH" != "main" ]; then
-  fail "visionpipe-web is on '$WEB_BRANCH', not main.
+if [ "$SKIP_WEB" = "0" ]; then
+  WEB_BRANCH=$(git -C "$WEB_PROJECT" rev-parse --abbrev-ref HEAD)
+  if [ "$WEB_BRANCH" != "main" ]; then
+    fail "visionpipe-web is on '$WEB_BRANCH', not main.
 The release script appends DMG commits to whatever branch is checked out, so
 running from a feature branch would leave the public website at the old
-version. Switch visionpipe-web to main (or merge your branch) and re-run."
+version. Switch visionpipe-web to main (or merge your branch) and re-run.
+
+If you knowingly need a hotfix that bypasses the website (homebrew + GitHub
+release + tap will get the new build, but the visionpipe.ai download button
+stays at whatever's on origin/main), re-run with --skip-web."
+  fi
+else
+  echo "  ⚠  --skip-web set: visionpipe-web won't be updated this release."
 fi
 
 # 3. gh CLI — required for GitHub release creation later.
@@ -469,19 +480,25 @@ fi
 
 # --- step 10: commit + push visionpipe-web ----------------------------------
 
-step "Committing release v${VERSION} in visionpipe-web"
-
-cd "$WEB_PROJECT"
-git add "$WEB_DOWNLOADS_RELATIVE"
-if git diff --cached --quiet; then
-  echo "  (no DMG changes to commit in visionpipe-web)"
+if [ "$SKIP_WEB" = "1" ]; then
+  step "Skipping visionpipe-web push (--skip-web)"
+  echo "  visionpipe.ai will remain at whatever's on origin/main until you merge"
+  echo "  whatever branch is currently holding the website work."
 else
-  git commit -m "Release v${VERSION}"
-  git push
-  ok "Pushed visionpipe-web"
-fi
+  step "Committing release v${VERSION} in visionpipe-web"
 
-cd "$PROJECT_ROOT"
+  cd "$WEB_PROJECT"
+  git add "$WEB_DOWNLOADS_RELATIVE"
+  if git diff --cached --quiet; then
+    echo "  (no DMG changes to commit in visionpipe-web)"
+  else
+    git commit -m "Release v${VERSION}"
+    git push
+    ok "Pushed visionpipe-web"
+  fi
+
+  cd "$PROJECT_ROOT"
+fi
 
 # --- step 11: clean up release-notes file -----------------------------------
 
@@ -540,19 +557,22 @@ else
 fi
 
 # 4. visionpipe-web origin/main has the new versioned DMG and the stable
-#    VisionPipe.dmg points at it (size match is the cheap proxy for "same
-#    bytes" — covers the real failure mode of a partial copy).
-git -C "$WEB_PROJECT" fetch origin main --quiet
-WEB_HAS_VERSIONED=$(git -C "$WEB_PROJECT" ls-tree --name-only "origin/main" -- "$WEB_DOWNLOADS_RELATIVE/VisionPipe-${VERSION}.dmg" 2>/dev/null || true)
-WEB_HAS_LATEST=$(git -C "$WEB_PROJECT" ls-tree --name-only "origin/main" -- "$WEB_DOWNLOADS_RELATIVE/VisionPipe.dmg" 2>/dev/null || true)
-if [ -n "$WEB_HAS_VERSIONED" ] && [ -n "$WEB_HAS_LATEST" ]; then
-  ok "visionpipe-web origin/main has VisionPipe-${VERSION}.dmg and VisionPipe.dmg"
+#    VisionPipe.dmg points at it. Skipped when --skip-web was passed.
+if [ "$SKIP_WEB" = "1" ]; then
+  echo "  (skipped visionpipe-web check — --skip-web)"
 else
-  echo "  ✗ visionpipe-web origin/main missing one or both of:"
-  echo "      - VisionPipe-${VERSION}.dmg ($([ -n "$WEB_HAS_VERSIONED" ] && echo present || echo MISSING))"
-  echo "      - VisionPipe.dmg            ($([ -n "$WEB_HAS_LATEST" ] && echo present || echo MISSING))"
-  echo "    Fix: cd $WEB_PROJECT && git checkout main && git pull && cp '$DMG_PATH' '$WEB_DOWNLOADS/' && cp '$DMG_PATH' '$WEB_DOWNLOADS/VisionPipe.dmg' && git add $WEB_DOWNLOADS_RELATIVE && git commit -m 'Release v${VERSION}' && git push"
-  SYNC_FAILED=1
+  git -C "$WEB_PROJECT" fetch origin main --quiet
+  WEB_HAS_VERSIONED=$(git -C "$WEB_PROJECT" ls-tree --name-only "origin/main" -- "$WEB_DOWNLOADS_RELATIVE/VisionPipe-${VERSION}.dmg" 2>/dev/null || true)
+  WEB_HAS_LATEST=$(git -C "$WEB_PROJECT" ls-tree --name-only "origin/main" -- "$WEB_DOWNLOADS_RELATIVE/VisionPipe.dmg" 2>/dev/null || true)
+  if [ -n "$WEB_HAS_VERSIONED" ] && [ -n "$WEB_HAS_LATEST" ]; then
+    ok "visionpipe-web origin/main has VisionPipe-${VERSION}.dmg and VisionPipe.dmg"
+  else
+    echo "  ✗ visionpipe-web origin/main missing one or both of:"
+    echo "      - VisionPipe-${VERSION}.dmg ($([ -n "$WEB_HAS_VERSIONED" ] && echo present || echo MISSING))"
+    echo "      - VisionPipe.dmg            ($([ -n "$WEB_HAS_LATEST" ] && echo present || echo MISSING))"
+    echo "    Fix: cd $WEB_PROJECT && git checkout main && git pull && cp '$DMG_PATH' '$WEB_DOWNLOADS/' && cp '$DMG_PATH' '$WEB_DOWNLOADS/VisionPipe.dmg' && git add $WEB_DOWNLOADS_RELATIVE && git commit -m 'Release v${VERSION}' && git push"
+    SYNC_FAILED=1
+  fi
 fi
 
 if [ "$SYNC_FAILED" = "1" ]; then

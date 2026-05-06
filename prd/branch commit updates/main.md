@@ -4,6 +4,23 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:25 PDT — Header dropdown + Footer cursor + --skip-web
+
+### Summary of changes since last update
+User reported two real bugs visible in v0.9.0: (a) clicking "Copy to Clipboard" with 0 credits shows a wait/spinner cursor that misreads as "thinking" instead of "rejected"; (b) clicking the three-dot overflow menu in the Header does nothing visible — silent failure of the underlying `window.prompt("Choose 1/2/3")` stub, depends on webview/macOS combo. Fixed both, plus added a `--skip-web` flag to `release.sh` so we can ship the desktop hot-fix without forcing the website rewrite to merge first.
+
+### Detail of changes made:
+- **`src/components/Header.tsx` overflow menu**: replaced the `window.prompt`-based stub with a proper React dropdown. Items: New session / Open session folder / Settings… / Reveal logs in Finder… / Save diagnostic bundle… Closes on item select, outside click, or Escape. Two new helpers (`MenuItem`, `MenuDivider`) inside the same file. Imports `invoke` so menu items can call `reveal_logs_in_finder` and `save_diagnostic_bundle` directly.
+- **`src/components/Footer.tsx` Copy-to-Clipboard disabled state**: `cursor: wait` → `cursor: not-allowed`, plus a dimmed teal background when `busy === true`. Reads as "rejected" instead of "in progress" — addresses the user's confusion about the spinner.
+- **`scripts/release.sh` `--skip-web` flag**: bypasses the `visionpipe-web on main` preflight check AND the visionpipe-web-side `git add/commit/push` AND the post-flight visionpipe-web verification. Use only when the website is mid-rewrite and the operator knows visionpipe.ai will lag the new build. Prints a warning at preflight time so it's visible.
+
+### Potential concerns to address:
+- The dropdown menu's hover effect uses imperative inline-style swaps (`onMouseEnter`/`onMouseLeave`). Functional but ugly; CSS modules or styled-components would be cleaner if the project standardises on one.
+- `--skip-web` is a one-way escape hatch. Repeated use leaves visionpipe.ai stale until someone manually merges. Each `--skip-web` release prints a warning to keep it visible; revisit if it gets used more than 2-3 times in a row.
+- This commit goes onto main as a feature commit; release.sh will add the actual `Release v0.9.1` commit on top.
+
+---
+
 ## Progress Update as of 2026-05-06 13:10 PDT — fix SettingsPanel overflow + label
 
 ### Summary of changes since last update
