@@ -69,9 +69,46 @@ export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }
     return () => window.removeEventListener("keydown", onKey);
   }, [captureFullscreen, onCancel]);
 
+  // Hide the macOS window chrome (traffic-light controls) while the
+  // capture overlay is visible — those dots peeking through during a
+  // capture are jarring and make the overlay feel like an app window
+  // rather than an OS-level capture surface (which is what users
+  // expect from Cmd+Shift+4 muscle memory). Restore on unmount so
+  // HistoryHub / SessionWindow have their normal chrome back.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    void win.setDecorations(false);
+    return () => { void win.setDecorations(true); };
+  }, []);
+
+  // Compute the selection rectangle in pixel coords. `null` until the
+  // user starts dragging, which means: nothing is dimmed yet, the
+  // entire screen passes through clean.
+  const rect = selection
+    ? {
+        x1: Math.min(selection.startX, selection.endX),
+        y1: Math.min(selection.startY, selection.endY),
+        x2: Math.max(selection.startX, selection.endX),
+        y2: Math.max(selection.startY, selection.endY),
+      }
+    : null;
+
+  const dimStyle: React.CSSProperties = {
+    position: "fixed",
+    background: "rgba(0,0,0,0.45)",
+    pointerEvents: "none",
+  };
+
   return (
     <div
-      style={{ position: "fixed", inset: 0, cursor: "crosshair", background: "rgba(0,0,0,0.2)" }}
+      style={{
+        position: "fixed", inset: 0, cursor: "crosshair",
+        // Default: completely transparent. The crosshair appears against
+        // the live screen — the user's cue to start dragging. Dimming
+        // only kicks in once the four masks render around an active
+        // selection (below).
+        background: "transparent",
+      }}
       onMouseDown={(e) => {
         setIsDragging(true);
         setSelection({ startX: e.clientX, startY: e.clientY, endX: e.clientX, endY: e.clientY });
@@ -85,17 +122,31 @@ export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }
         if (selection) completeSelection(selection);
       }}
     >
-      {selection && (
-        <div style={{
-          position: "absolute",
-          left: Math.min(selection.startX, selection.endX),
-          top: Math.min(selection.startY, selection.endY),
-          width: Math.abs(selection.endX - selection.startX),
-          height: Math.abs(selection.endY - selection.startY),
-          border: "2px solid #2e8b7a",
-          background: "rgba(46, 139, 122, 0.1)",
-          pointerEvents: "none",
-        }} />
+      {/* Dim only the four rectangles AROUND the selection. The selection
+          itself remains fully transparent (i.e. the user can see exactly
+          what they'll capture, undimmed). Mirrors the native macOS
+          Cmd+Shift+4 behavior. Only renders when a selection exists —
+          before the first mousedown, the entire screen is unobstructed. */}
+      {rect && (
+        <>
+          {/* top — full width, above the selection */}
+          <div style={{ ...dimStyle, left: 0, right: 0, top: 0, height: rect.y1 }} />
+          {/* bottom — full width, below the selection */}
+          <div style={{ ...dimStyle, left: 0, right: 0, top: rect.y2, bottom: 0 }} />
+          {/* left — between top and bottom, left of the selection */}
+          <div style={{ ...dimStyle, left: 0, top: rect.y1, width: rect.x1, height: rect.y2 - rect.y1 }} />
+          {/* right — between top and bottom, right of the selection */}
+          <div style={{ ...dimStyle, left: rect.x2, top: rect.y1, right: 0, height: rect.y2 - rect.y1 }} />
+          {/* selection border + faint fill, no fill outside */}
+          <div style={{
+            position: "absolute",
+            left: rect.x1, top: rect.y1,
+            width: rect.x2 - rect.x1, height: rect.y2 - rect.y1,
+            border: "2px solid #2e8b7a",
+            background: "rgba(46, 139, 122, 0.05)",
+            pointerEvents: "none",
+          }} />
+        </>
       )}
       <div style={{
         position: "absolute", top: 24, left: "50%", transform: "translateX(-50%)",
@@ -103,6 +154,7 @@ export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }
         color: captureMode === "scrolling" ? "#1a2a20" : "#cfd8d2",
         padding: "8px 20px", borderRadius: 999, fontSize: 14, fontFamily: "Verdana",
         fontWeight: captureMode === "scrolling" ? 700 : 400,
+        pointerEvents: "none",
       }}>
         {captureMode === "scrolling"
           ? "Scrolling capture: drag the region (the page will scroll & stitch automatically) · Esc to cancel"

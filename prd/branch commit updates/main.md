@@ -4,6 +4,23 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:35 PDT — capture overlay UX
+
+### Summary of changes since last update
+User reported the screenshot capture flow felt jarring: pressing the global hotkey (⌘⇧C) showed the macOS traffic-light controls in the top-left AND darkened the entire screen *before* any selection had been made. Standard macOS Cmd+Shift+4 muscle memory expects: crosshair-only on initial press, dimming only outside the selection rectangle once dragging starts. This fix matches that.
+
+### Detail of changes made:
+- **`src/components/SelectionOverlay.tsx`**: dropped the always-on `background: "rgba(0,0,0,0.2)"` fullscreen overlay. The container is now `background: "transparent"` until the user mousedowns. Once a selection exists, four absolutely-positioned dim rectangles (`rgba(0,0,0,0.45)`) render around the selection (top / bottom / left / right of the selection rect), with the selection itself remaining fully transparent so the user can see exactly what will be captured. Mirrors native Cmd+Shift+4.
+- **`src/components/SelectionOverlay.tsx`**: new `useEffect` that calls `getCurrentWindow().setDecorations(false)` on mount and `setDecorations(true)` on unmount. Hides the macOS traffic-light controls during the capture overlay; restores them so HistoryHub / SessionWindow keep their normal close/minimize buttons.
+- The hint pill ("Drag a region · Enter for fullscreen · Esc to cancel") gets `pointer-events: none` so it doesn't block clicks at the top center of the overlay.
+
+### Potential concerns to address:
+- `setDecorations(false)` toggling assumes nothing else is concurrently modifying decoration state. If a future feature also wants to toggle, they need to coordinate (e.g. use a "decoration suspended" counter rather than a boolean).
+- The 0.45 alpha for the dimming was picked by feel. Native macOS uses something close to that but slightly less; tunable later.
+- Not yet released — the user wants to manual-smoke-test before shipping per the small-cadence + verify-before-completion discipline. The fix is on main; running `pnpm tauri dev` from main exercises it.
+
+---
+
 ## Progress Update as of 2026-05-06 13:21 PDT — v0.9.1
 *(Most recent updates at top)*
 
