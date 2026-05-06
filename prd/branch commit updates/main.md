@@ -4,6 +4,22 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:30 PDT — release.sh sync guards (post-v0.9.0)
+
+### Summary of changes since last update
+Added pre-flight + post-flight checks to `scripts/release.sh` so future releases can't silently leave a public channel stale (the failure mode that hit `visionpipe-web` during the v0.7.0–v0.9.0 burst, where release commits stacked on a feature branch and never reached production). Also pushed the homebrew tap to v0.9.0 manually (the killed v0.9.0 release.sh ran past the visionpipe push but never reached the homebrew tap step).
+
+### Detail of changes made:
+- **`scripts/release.sh` preflight** (after `--bump` validation): refuses to run unless this repo is on `main` with a clean working tree; refuses unless `visionpipe-web` is on `main`; refuses unless `gh` CLI is authenticated. Each failure prints why and how to fix it.
+- **`scripts/release.sh` post-flight** (right before the success banner): verifies `visionpipe origin/main` HEAD message is `Release v$VERSION`; verifies the GitHub release exists with a DMG attached; verifies the homebrew tap public version (read via `gh api`) equals `$VERSION`; verifies `visionpipe-web origin/main` contains both the versioned and stable DMGs. Each failed check prints the specific `gh release upload` / `cp + commit + push` / etc. command to fix it manually. Read-only — never modifies state.
+- **Homebrew tap manual catch-up**: `~/.homebrew-visionpipe` cask file was at v0.8.2 because the killed v0.9.0 release.sh died before the tap-bump step. Manually updated `Casks/visionpipe.rb` to v0.9.0 + sha256 of `VisionPipe-0.9.0.dmg`, committed + pushed to `VisionPipe/homebrew-visionpipe`.
+
+### Potential concerns to address:
+- The post-flight DMG check confirms files are present in `visionpipe-web/origin/main` but doesn't compare hashes between the versioned and stable copies. Sufficient for the failure modes seen so far (push rejected, file missing); a stricter check would compare `git cat-file blob` of both.
+- The preflight blocks releasing while `visionpipe-web` is on a non-main branch. Currently `visionpipe-web` is on `update-website-copy-2026-05-04` with 10 unpushed commits (including 4 historical Release commits from this session). Until that branch merges to main, no further release from this script is possible — by design. If a desktop hot-fix is needed before the website rewrite is ready, add a `--skip-web` flag.
+
+---
+
 ## Progress Update as of 2026-05-06 12:39 PDT — v0.9.0
 *(Most recent updates at top)*
 

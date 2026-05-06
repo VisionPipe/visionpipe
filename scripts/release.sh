@@ -77,6 +77,44 @@ case "$BUMP_TYPE" in
   *) fail "Invalid --bump '$BUMP_TYPE' (expected patch, minor, or major)" ;;
 esac
 
+# --- preflight: refuse to release into a stale state -------------------------
+#
+# A previous release attempt (v0.7.0–v0.9.0 sequence on 2026-05-06) silently
+# stacked release commits onto a `visionpipe-web` feature branch instead of
+# main, leaving the public website at v0.6.1 while everything else moved
+# forward. These checks make those failure modes loud and refuse to proceed
+# until the operator has fixed them.
+
+step "Preflight checks"
+
+# 1. visionpipe (this repo) — must be on main, working tree clean except for
+#    optional `scripts/.release-notes.md`.
+VP_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD)
+if [ "$VP_BRANCH" != "main" ]; then
+  fail "visionpipe is on '$VP_BRANCH', not main. Releases must be cut from main — switch first."
+fi
+DIRTY=$(git -C "$PROJECT_ROOT" status --porcelain | grep -v "scripts/\.release-notes\.md" || true)
+if [ -n "$DIRTY" ]; then
+  fail "visionpipe has uncommitted changes. Commit, stash, or discard before releasing:
+$DIRTY"
+fi
+
+# 2. visionpipe-web — must exist and be on main, otherwise the new DMG commit
+#    lands on a feature branch and the public Download button stays stale.
+[ -d "$WEB_PROJECT" ] || fail "visionpipe-web project not found at $WEB_PROJECT"
+WEB_BRANCH=$(git -C "$WEB_PROJECT" rev-parse --abbrev-ref HEAD)
+if [ "$WEB_BRANCH" != "main" ]; then
+  fail "visionpipe-web is on '$WEB_BRANCH', not main.
+The release script appends DMG commits to whatever branch is checked out, so
+running from a feature branch would leave the public website at the old
+version. Switch visionpipe-web to main (or merge your branch) and re-run."
+fi
+
+# 3. gh CLI — required for GitHub release creation later.
+gh auth status >/dev/null 2>&1 || fail "gh CLI not authenticated. Run 'gh auth login'."
+
+ok "Preflight passed"
+
 # --- compute new version -----------------------------------------------------
 
 CURRENT_VERSION=$(node -p "require('./package.json').version")
@@ -451,6 +489,77 @@ if [ -f "$NOTES_FILE" ]; then
   rm -f "$NOTES_FILE"
   ok "Cleared $NOTES_FILE for the next release"
 fi
+
+# --- step 12: post-flight sync verification ----------------------------------
+#
+# Confirms every public channel is actually at $VERSION before declaring
+# success. If any channel is stale, prints the specific manual-fix command
+# and exits non-zero. This catches partial-failure modes (script killed
+# mid-pipeline, push rejected, gh release upload partial) where the
+# success banner would otherwise lie about the state.
+
+step "Verifying release sync"
+SYNC_FAILED=0
+
+# 1. visionpipe origin/main contains "Release v$VERSION" at HEAD.
+git -C "$PROJECT_ROOT" fetch origin main --quiet
+EXPECTED_MSG="Release v${VERSION}"
+ACTUAL_MSG=$(git -C "$PROJECT_ROOT" log -1 --format="%s" "origin/main")
+if [ "$ACTUAL_MSG" = "$EXPECTED_MSG" ]; then
+  ok "visionpipe origin/main HEAD: $ACTUAL_MSG"
+else
+  echo "  ✗ visionpipe origin/main HEAD is '$ACTUAL_MSG', expected '$EXPECTED_MSG'"
+  echo "    Fix: git -C $PROJECT_ROOT push origin main"
+  SYNC_FAILED=1
+fi
+
+# 2. GitHub release exists with the DMG attached.
+if gh release view "v${VERSION}" --repo VisionPipe/visionpipe >/dev/null 2>&1; then
+  ASSET=$(gh release view "v${VERSION}" --repo VisionPipe/visionpipe --json assets --jq '.assets[].name' | grep -E "VisionPipe.*\.dmg" || true)
+  if [ -n "$ASSET" ]; then
+    ok "GitHub release v${VERSION} ($ASSET)"
+  else
+    echo "  ✗ GitHub release v${VERSION} exists but no DMG attached"
+    echo "    Fix: gh release upload v${VERSION} '$DMG_PATH' --repo VisionPipe/visionpipe --clobber"
+    SYNC_FAILED=1
+  fi
+else
+  echo "  ✗ GitHub release v${VERSION} missing"
+  echo "    Fix: gh release create v${VERSION} '$DMG_PATH' --title v${VERSION} --notes 'Release v${VERSION}' --repo VisionPipe/visionpipe"
+  SYNC_FAILED=1
+fi
+
+# 3. Homebrew tap (public-facing) is at $VERSION.
+TAP_VERSION=$(gh api repos/VisionPipe/homebrew-visionpipe/contents/Casks/visionpipe.rb --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | awk -F'"' '/^  version/ {print $2; exit}')
+if [ "$TAP_VERSION" = "$VERSION" ]; then
+  ok "Homebrew tap public version: v${TAP_VERSION}"
+else
+  echo "  ✗ Homebrew tap is at v${TAP_VERSION:-unknown}, expected v${VERSION}"
+  echo "    Fix: re-run the homebrew section of release.sh, or push '$TAP_DIR' manually"
+  SYNC_FAILED=1
+fi
+
+# 4. visionpipe-web origin/main has the new versioned DMG and the stable
+#    VisionPipe.dmg points at it (size match is the cheap proxy for "same
+#    bytes" — covers the real failure mode of a partial copy).
+git -C "$WEB_PROJECT" fetch origin main --quiet
+WEB_HAS_VERSIONED=$(git -C "$WEB_PROJECT" ls-tree --name-only "origin/main" -- "$WEB_DOWNLOADS_RELATIVE/VisionPipe-${VERSION}.dmg" 2>/dev/null || true)
+WEB_HAS_LATEST=$(git -C "$WEB_PROJECT" ls-tree --name-only "origin/main" -- "$WEB_DOWNLOADS_RELATIVE/VisionPipe.dmg" 2>/dev/null || true)
+if [ -n "$WEB_HAS_VERSIONED" ] && [ -n "$WEB_HAS_LATEST" ]; then
+  ok "visionpipe-web origin/main has VisionPipe-${VERSION}.dmg and VisionPipe.dmg"
+else
+  echo "  ✗ visionpipe-web origin/main missing one or both of:"
+  echo "      - VisionPipe-${VERSION}.dmg ($([ -n "$WEB_HAS_VERSIONED" ] && echo present || echo MISSING))"
+  echo "      - VisionPipe.dmg            ($([ -n "$WEB_HAS_LATEST" ] && echo present || echo MISSING))"
+  echo "    Fix: cd $WEB_PROJECT && git checkout main && git pull && cp '$DMG_PATH' '$WEB_DOWNLOADS/' && cp '$DMG_PATH' '$WEB_DOWNLOADS/VisionPipe.dmg' && git add $WEB_DOWNLOADS_RELATIVE && git commit -m 'Release v${VERSION}' && git push"
+  SYNC_FAILED=1
+fi
+
+if [ "$SYNC_FAILED" = "1" ]; then
+  fail "One or more channels are out of sync. See above for fix commands."
+fi
+
+ok "All channels synced at v${VERSION}"
 
 # --- done --------------------------------------------------------------------
 
