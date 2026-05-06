@@ -4,6 +4,35 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:21 PDT — v0.9.1
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.9.1 — fixes Settings panel overflow + traffic-light overlap, replaces the broken three-dot prompt menu with a real dropdown (with Reveal Logs / Save Diagnostic Bundle entries), and changes the Copy to Clipboard disabled-state cursor from "wait" (which looked like a spinner) to "not-allowed".
+
+### Detail of changes made:
+
+- **SettingsPanel modal scroll** — outer overlay uses `align-items: flex-start` + `overflow-y: auto` so the modal scrolls inside the viewport when taller than the window. Previously the "Reset all to defaults" button + the bottom note were below the visible area on the (newly-tightened) HistoryHub window. 80 px left padding inside the card clears the macOS traffic-light dots so the "Settings" header doesn't overlap them. Backdrop click (clicking the dimmed area outside the card) closes the modal.
+
+- **Header three-dot menu rewritten as a real dropdown.** Was previously `window.prompt("Choose: 1) New session 2) ... (1/2/3)")`, which on at least one user's setup silently dropped — the menu button felt unresponsive. New menu: New session / Open session folder / Settings… / Reveal logs in Finder… / Save diagnostic bundle… Each item is one click. Closes on item select, outside click, or Escape.
+
+- **Copy to Clipboard disabled cursor** — was `cursor: wait` (renders as a spinner on macOS), which made users think the click was pending instead of rejected. Now `cursor: not-allowed` (slashed circle) plus a dimmed background so the disabled state reads as "no" rather than "thinking".
+
+- **`--skip-web` flag added to `release.sh`.** Lets the operator ship a desktop hot-fix to GitHub releases + homebrew tap while `visionpipe-web` is mid-rewrite on a feature branch (and therefore can't accept the new DMG commit on main). The script's pre-flight + post-flight visionpipe-web checks are both bypassed when `--skip-web` is passed. The website itself stays at whatever's currently on `visionpipe-web origin/main` until the operator merges. This release uses `--skip-web` because `visionpipe-web` is on `update-website-copy-2026-05-04`.
+
+- **Stale "Copy & Send" hotkey row label** in Settings → fixed to "Copy to Clipboard" (matches the v0.8.0 Footer rename).
+
+### Potential concerns to address:
+
+- The dropdown menu's hover effect uses imperative `onMouseEnter` / `onMouseLeave` to swap inline `background`. Works fine but a styled-components / CSS module solution would be cleaner if the project standardizes on one.
+- "Save diagnostic bundle…" is now one click away — make sure the path it reveals (`~/Downloads/visionpipe-diagnostic-<timestamp>.zip`) doesn't accidentally include anything sensitive. Currently it bundles `~/Library/Logs/com.visionpipe.desktop/`, version info, and `sw_vers`/`hw.model`/`machdep.cpu.brand_string` — no user data.
+- This release is `--skip-web`, so visionpipe.ai download button continues to point at v0.6.1 until the website rewrite branch merges.
+
+---
+
+
 ## Progress Update as of 2026-05-06 13:25 PDT — Header dropdown + Footer cursor + --skip-web
 
 ### Summary of changes since last update
