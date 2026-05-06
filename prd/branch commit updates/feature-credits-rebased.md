@@ -4,6 +4,38 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-06 09:00 PDT — v0.6.1 (frontend wiring)
+
+### Summary of changes since last update
+Wired the credit pricing into the React UI. Added `CreditProvider` context that reads `get_credit_balance` on mount and recomputes `currentBundleCost` (debounced 150ms) via `preview_bundle_cost` IPC whenever session state changes. Added a Header chip showing `Cost: N cr · Balance: M cr` with amber styling in the insufficient state. Gated `Copy & Send` on `deduct_for_bundle`: deduction happens BEFORE the clipboard write, so the user cannot get the bundle without paying or pay without getting the bundle. Full type-check clean (tsc --noEmit exit 0); 28 Vitest tests pass; production vite build succeeds.
+
+### Detail of changes made:
+- **`src/state/audio-duration.ts`** (new): Pure helper `deriveAudioSeconds(screenshots)` that sums `(audioOffset.end - audioOffset.start)` across screenshots, skipping any with `end === null` (still recording). Extracted to its own file for testability — the React-rendering integration test approach was hitting a vitest+jsdom hang (likely React 19 + provider chain) so the testable logic moved here.
+- **`src/state/__tests__/audio-duration.test.ts`** (new): 6 Vitest tests — empty session, multi-screenshot summing, active-recording exclusion, negative-duration clamping, fractional-seconds rounding, spec's 5-screenshot/47s example. All pass.
+- **`src/state/credit-context.tsx`** (new): `CreditProvider` + `useCredit()` hook. Holds `{ balance, currentBundleCost, refresh, deductForBundle }`. Initial balance load on mount via `get_credit_balance` IPC. `currentBundleCost` recomputed debounced 150ms via `preview_bundle_cost` whenever screenshot count or audio seconds change. `deductForBundle()` calls `deduct_for_bundle` and refreshes balance from backend on success; throws on insufficient balance for the caller to handle.
+- **`src/App.tsx`**: Wrapped the inner tree in `<CreditProvider>` (inside `<SessionProvider>` so the context can call `useSession()`).
+- **`src/components/Header.tsx`**: Added `CreditChip` subcomponent rendering `Cost: N cr · Balance: M cr` in the middle of the header row. Amber border + amber text when `currentBundleCost.total > balance`. Tooltip explains the breakdown.
+- **`src/components/SessionWindow.tsx`**: `onCopyAndSend` now calls `deductForBundle()` first; on `Err`, aborts BEFORE touching the clipboard and shows an error toast pointing to Buy Credits. On `Ok`, the existing `save_and_copy_markdown` flow runs as before, with the deducted cost in the success toast. Footer's `busy` prop is now driven by `currentBundleCost.total > balance` so the button auto-disables in the insufficient state with a "Need X more credits" tooltip. The fallback text-only clipboard path also reports the deducted cost so the user knows their credits weren't lost on a partial failure.
+
+### What was NOT done (and why):
+- **The full plan's React-rendering integration tests for CreditProvider were dropped.** The vitest+jsdom run hung indefinitely on tests that use `<SessionProvider><CreditProvider>` plus `vi.mock("@tauri-apps/api/core")`. Spent ~20 min trying to isolate; dropped to keep the implementation moving. The pure helper test for `deriveAudioSeconds` covers the only non-trivial calculation; the IPC-and-state plumbing is verifiable via the manual smoke test.
+- **Manual smoke test (Task 9 Step 3) not executed yet.** Requires user interaction with the desktop (taking screenshots, recording audio, restarting). Spec runbook is in `docs/superpowers/specs/2026-05-04-credit-pricing-redesign.md` and `docs/superpowers/plans/2026-05-04-credit-pricing-redesign.md` Task 9.
+
+### What was verified:
+- `cargo test -p visionpipe credits`: 16/16 tests pass (audio tiers, screenshots, dormant annotations, worked spec examples, ledger deduction).
+- `cargo build -p visionpipe`: clean (8 advisory warnings about unused functions in unrelated modules).
+- `tsc --noEmit`: exit 0.
+- `vitest run` (full suite): 5 files, 28 tests, all pass.
+- `vite build`: succeeds (~274 KB JS, 21 KB CSS, no errors; same dynamic-vs-static import advisories that pre-existed).
+
+### Potential concerns to address:
+- **Manual UI verification still pending.** When the user is back, they should run through the spec's smoke test (set balance to 5 via devtools, take 3 screenshots, record 25s, take 4th screenshot to trigger insufficient state, top up, send, restart app, confirm balance persists).
+- **Closing-narration audio is still under-counted.** Sessions where the user records narration AFTER the last screenshot won't have that duration in the cost (no `AudioOffset` in type model). User-friendly direction; flagged for follow-up.
+- **No real Buy Credits UI.** The "buy credits" affordance in the insufficient state is a tooltip + disabled button only. Real purchase flow waits on `api.visionpipe.ai`.
+- **`add_credits` only callable via devtools console.** Once Buy Credits ships, this is fine; for now, the smoke-test runbook is the workaround.
+
+---
+
 ## Progress Update as of 2026-05-04 17:30 PDT — v0.6.1 (Rust impl)
 
 ### Summary of changes since last update

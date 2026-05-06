@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionProvider, useSession } from "./state/session-context";
 import { MicProvider } from "./state/mic-context";
+import { CreditProvider } from "./state/credit-context";
 import { MicOnboardingModal } from "./components/MicOnboardingModal";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
@@ -623,7 +624,9 @@ function AppInner() {
 export default function App() {
   return (
     <SessionProvider>
-      <AppInner />
+      <CreditProvider>
+        <AppInner />
+      </CreditProvider>
     </SessionProvider>
   );
 }
