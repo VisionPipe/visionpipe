@@ -4,6 +4,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
 mod audio;
@@ -36,6 +37,96 @@ fn save_balance(app: &AppHandle, balance: u64) -> Result<(), String> {
     let store = app.store(CREDIT_STORE_FILE).map_err(|e| e.to_string())?;
     store.set(CREDIT_BALANCE_KEY, serde_json::Value::from(balance));
     store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// (Re-)register all global keyboard shortcuts (Cmd+Shift+O for
+/// onboarding, the configurable capture combo, Cmd+Shift+S for
+/// scrolling capture). Reads the latest config from disk on each
+/// call, so changing the capture combo via the Settings panel and
+/// then calling `resume_global_shortcuts` makes the new combo live
+/// without an app restart.
+///
+/// Called from `setup()` on launch and from `resume_global_shortcuts`
+/// after a Settings-panel rebind.
+fn register_global_shortcuts(app: &AppHandle) -> Result<(), String> {
+    // Cmd+Shift+O — re-open the onboarding window (debug/manual access).
+    let onboarding_handle = app.clone();
+    app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+O", move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            log::info!("[VisionPipe] Show-onboarding shortcut triggered");
+            if let Some(window) = onboarding_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("show-onboarding", ());
+            }
+        }
+    }).map_err(|e| e.to_string())?;
+
+    // Configurable global capture shortcut (default Cmd+Shift+C).
+    let cfg = hotkey_config::load();
+    let global_combo = cfg.take_next_screenshot.clone();
+    let app_handle = app.clone();
+    app.global_shortcut().on_shortcut(global_combo.as_str(), move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            log::info!("[VisionPipe] Capture shortcut triggered");
+            // CRITICAL: capture metadata BEFORE we show + focus the
+            // window. Once VP has focus, `metadata::collect_metadata()`
+            // would report VP itself as the active app — yielding the
+            // "App: visionpipe" garbage in the markdown output.
+            stash_current_metadata(&app_handle);
+            if let Some(window) = app_handle.get_webview_window("main") {
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let pos = monitor.position();
+                    let _ = window.set_position(tauri::Position::Physical(
+                        tauri::PhysicalPosition::new(pos.x, pos.y),
+                    ));
+                    let _ = window.set_size(tauri::Size::Physical(
+                        tauri::PhysicalSize::new(size.width, size.height),
+                    ));
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.set_always_on_top(true);
+                let handle = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let _ = handle.emit("start-capture", "ready");
+                });
+            }
+        }
+    }).map_err(|e| e.to_string())?;
+
+    // Cmd+Shift+S — scrolling capture.
+    let scroll_handle = app.clone();
+    app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+S", move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            log::info!("[VisionPipe] Scroll-capture shortcut triggered");
+            stash_current_metadata(&scroll_handle);
+            if let Some(window) = scroll_handle.get_webview_window("main") {
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let pos = monitor.position();
+                    let _ = window.set_position(tauri::Position::Physical(
+                        tauri::PhysicalPosition::new(pos.x, pos.y),
+                    ));
+                    let _ = window.set_size(tauri::Size::Physical(
+                        tauri::PhysicalSize::new(size.width, size.height),
+                    ));
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.set_always_on_top(true);
+                let handle = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let _ = handle.emit("start-scroll-capture", "ready");
+                });
+            }
+        }
+    }).map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -771,6 +862,26 @@ async fn save_hotkey_config(cfg: hotkey_config::HotkeyConfig) -> Result<(), Stri
     hotkey_config::save(&cfg)
 }
 
+/// Unregister all global keyboard shortcuts. Called from the Settings
+/// panel when the user clicks a hotkey row to start a rebind — without
+/// this, pressing the existing capture combo (e.g. ⌘⇧C) during the
+/// rebind would also fire the global handler and pull focus away from
+/// the Settings panel before the JS keydown listener could see it.
+#[tauri::command]
+async fn pause_global_shortcuts(app: AppHandle) -> Result<(), String> {
+    app.global_shortcut().unregister_all().map_err(|e| e.to_string())
+}
+
+/// Re-read the hotkey config from disk and re-register all global
+/// shortcuts. Called from the Settings panel after a rebind finishes
+/// (whether by capturing a new combo, or by Esc cancellation). Reading
+/// from disk every time means a freshly-saved config is picked up
+/// immediately — no app restart needed.
+#[tauri::command]
+async fn resume_global_shortcuts(app: AppHandle) -> Result<(), String> {
+    register_global_shortcuts(&app)
+}
+
 /// Write text content to an arbitrary absolute path. Used by the
 /// "Save to disk" affordance on the session footer: the frontend prompts
 /// the user for a destination via the dialog plugin, then calls this with
@@ -1014,94 +1125,11 @@ pub fn run() {
                 let _ = window.hide();
             }
 
-            // Register global shortcuts
-            use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-
-            // Cmd+Shift+O — re-open the onboarding window (debug/manual access)
-            let onboarding_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+O", move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    eprintln!("[VisionPipe] Show-onboarding shortcut triggered");
-                    if let Some(window) = onboarding_handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        let _ = window.emit("show-onboarding", ());
-                    }
-                }
-            })?;
-
-            // Configurable global capture shortcut (default Cmd+Shift+C)
-            let cfg = hotkey_config::load();
-            let global_combo = cfg.take_next_screenshot.clone();
-            let app_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut(global_combo.as_str(), move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    eprintln!("[VisionPipe] Shortcut triggered!");
-                    // CRITICAL: capture metadata BEFORE we show + focus the
-                    // window. Once VP has focus, `metadata::collect_metadata()`
-                    // would report VP itself as the active app — yielding the
-                    // "App: visionpipe" garbage in the markdown output.
-                    stash_current_metadata(&app_handle);
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        // Size window to fill the screen
-                        if let Ok(Some(monitor)) = window.current_monitor() {
-                            let size = monitor.size();
-                            let pos = monitor.position();
-                            let _ = window.set_position(tauri::Position::Physical(
-                                tauri::PhysicalPosition::new(pos.x, pos.y)
-                            ));
-                            let _ = window.set_size(tauri::Size::Physical(
-                                tauri::PhysicalSize::new(size.width, size.height)
-                            ));
-                            eprintln!("[VisionPipe] Window sized to {}x{}", size.width, size.height);
-                        }
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        let _ = window.set_always_on_top(true);
-                        // Simple event with no payload — frontend handles the rest
-                        let handle = window.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(300));
-                            eprintln!("[VisionPipe] Emitting start-capture");
-                            let _ = handle.emit("start-capture", "ready");
-                        });
-                    }
-                }
-            })?;
-
-            // Cmd+Shift+S — start a SCROLLING capture: same selection
-            // overlay, but on confirm the frontend calls
-            // `take_scrolling_screenshot` instead of `take_screenshot`.
-            let scroll_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+S", move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    eprintln!("[VisionPipe] Scroll-capture shortcut triggered");
-                    // Same as the regular hotkey: capture metadata before
-                    // Vision|Pipe steals focus.
-                    stash_current_metadata(&scroll_handle);
-                    if let Some(window) = scroll_handle.get_webview_window("main") {
-                        if let Ok(Some(monitor)) = window.current_monitor() {
-                            let size = monitor.size();
-                            let pos = monitor.position();
-                            let _ = window.set_position(tauri::Position::Physical(
-                                tauri::PhysicalPosition::new(pos.x, pos.y)
-                            ));
-                            let _ = window.set_size(tauri::Size::Physical(
-                                tauri::PhysicalSize::new(size.width, size.height)
-                            ));
-                        }
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        let _ = window.set_always_on_top(true);
-                        let handle = window.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(300));
-                            eprintln!("[VisionPipe] Emitting start-scroll-capture");
-                            let _ = handle.emit("start-scroll-capture", "ready");
-                        });
-                    }
-                }
-            })?;
+            // Register global shortcuts (factored out so the Settings
+            // panel can pause/resume them during a rebind).
+            if let Err(e) = register_global_shortcuts(app.handle()) {
+                log::error!("[VisionPipe] Failed to register global shortcuts: {}", e);
+            }
 
             Ok(())
         })
@@ -1128,6 +1156,8 @@ pub fn run() {
             load_install_token,
             load_hotkey_config,
             save_hotkey_config,
+            pause_global_shortcuts,
+            resume_global_shortcuts,
             list_recent_sessions_cmd,
             reveal_in_finder,
             read_session_file,

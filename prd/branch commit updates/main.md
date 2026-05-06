@@ -4,6 +4,35 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 12:39 PDT — v0.9.0
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.9.0 — Settings panel rebuilt: Hex-style key-cap rendering for shortcuts, the row itself is the click target (no separate "Change" button), and rebinding actually works now (was previously eaten by the live global shortcut). Hotkey changes also take effect immediately, no app restart needed.
+
+### Detail of changes made:
+
+- **Settings hotkey rows redesigned.** Each row's combo is now rendered as the same dark Hex-style key-caps used in HotkeyPill (one cap per key — ⌘ ⇧ C — instead of the old `CmdOrCtrl+Shift+C` text in an amber outline box). The whole keycap cluster is the click target — clicking it starts a "Press shortcut…" capture state. The separate "Change" button is gone. Reset button stays.
+
+- **Bug fix: rebinding actually persists now.** Before this release, pressing the existing global capture combo (⌘⇧C by default) inside the Settings rebind UI was consumed by the live global shortcut handler — the Rust side fired its capture flow (showing the selection overlay) and the JS keydown listener never saw the event. Fix: new `pause_global_shortcuts` / `resume_global_shortcuts` Tauri commands. The Settings row calls `pause_global_shortcuts` before listening for keystrokes, and `resume_global_shortcuts` after the user either captures a new combo or hits Esc to cancel. `resume_global_shortcuts` re-reads `settings.json` from disk and re-registers all global shortcuts, so a freshly-saved combo is live the same instant — no app restart required (the prior "Note: hotkey changes take effect after the next app restart." text is gone).
+
+- **Refactor: `register_global_shortcuts(&AppHandle)` extracted from `setup()`** so both the launch path and the Settings rebind resume path share one implementation. Shortcut callbacks (capture, scroll capture, show-onboarding) now use `log::info!` instead of `eprintln!` so they land in the rotating log file.
+
+- **Settings panel padding.** Bumped top padding to 36 px so the "Settings" header doesn't crash into the macOS chrome / window controls.
+
+- **`splitKeys` lifted from HotkeyPill into a new `KeyCaps` shared component** (`src/components/KeyCaps.tsx`). Both the inline HotkeyPill and the Settings rebind row now render through `<KeyCaps combo={...} size="sm|md|lg" />`. Single source of truth for the key-cap visual.
+
+### Potential concerns to address:
+
+- `pause_global_shortcuts` calls `unregister_all()` which clears every global shortcut registered by the app. If we ever add new global shortcuts that aren't routed through `register_global_shortcuts()`, they'll be silently lost on a Settings rebind. Consolidating registration through that one helper is the design intent — but worth a comment if future shortcuts are added elsewhere.
+- The Settings panel's `persist()` now invokes `resume_global_shortcuts` after every save, which re-registers the closures. With three rows and three `persist` calls (one per row touched), there are extra redundant registrations — harmless because Tauri's `unregister_all` runs implicitly on the next pause, but a Real Implementation would diff config changes and only re-register what moved.
+- Clicking outside a capturing row doesn't currently cancel the capture (only Escape does). The cleanup-on-unmount effect handles the case where Settings is closed mid-capture, but lingering listeners across in-panel interactions could be a polish item.
+
+---
+
+
 ## Progress Update as of 2026-05-06 12:31 PDT — v0.8.2
 *(Most recent updates at top)*
 

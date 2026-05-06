@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { __test__ } from "../HotkeyPill";
-
-const { splitKeys } = __test__;
+import { splitKeys } from "../KeyCaps";
 
 describe("splitKeys", () => {
   it("splits CmdOrCtrl+Shift+C into [⌘, ⇧, C]", () => {
@@ -32,5 +30,9 @@ describe("splitKeys", () => {
     expect(splitKeys("CmdOrCtrl+Space")).toEqual(["⌘", "␣"]);
     expect(splitKeys("Backspace")).toEqual(["⌫"]);
     expect(splitKeys("Escape")).toEqual(["⎋"]);
+  });
+
+  it("returns an empty array for an empty combo string", () => {
+    expect(splitKeys("")).toEqual([]);
   });
 });

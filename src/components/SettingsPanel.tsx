@@ -51,6 +51,12 @@ export function SettingsPanel({ onClose }: Props) {
         toggle_view_mode: next.toggleViewMode,
       },
     });
+    // Tell the backend to drop and re-register all global shortcuts
+    // with the just-saved config. Without this, the global capture
+    // combo only changes after an app restart.
+    await invoke("resume_global_shortcuts").catch((err) => {
+      console.warn("[VisionPipe] resume_global_shortcuts failed:", err);
+    });
   };
 
   const others = (k: keyof HotkeyConfig): string[] => {
@@ -64,15 +70,19 @@ export function SettingsPanel({ onClose }: Props) {
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
     }}>
       <div style={{
-        background: C.deepForest, padding: 24, borderRadius: 8,
+        background: C.deepForest, borderRadius: 8,
         minWidth: 560, maxWidth: 720, color: C.textBright, fontFamily: FONT_BODY,
         border: `1px solid ${C.borderLight}`,
+        // Generous top padding so "Settings" doesn't collide with the
+        // macOS chrome / window-title area when the modal sits high in
+        // the viewport. 28 px elsewhere; 36 top.
+        padding: "36px 28px 24px 28px",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h2 style={{ margin: 0 }}>Settings</h2>
+          <h2 style={{ margin: 0, fontSize: 20 }}>Settings</h2>
           <button onClick={onClose} style={{
             background: "transparent", border: "none", color: C.textBright,
-            fontSize: 20, cursor: "pointer",
+            fontSize: 24, cursor: "pointer", lineHeight: 1, padding: 0,
           }}>×</button>
         </div>
         <h3 style={{ marginTop: 0, color: C.textMuted, fontSize: 12, textTransform: "uppercase", letterSpacing: 1 }}>
@@ -104,7 +114,7 @@ export function SettingsPanel({ onClose }: Props) {
             color: C.textMuted, padding: "6px 14px", borderRadius: 4, cursor: "pointer",
           }}>Reset all to defaults</button>
           <div style={{ fontSize: 11, color: C.textMuted, alignSelf: "center" }}>
-            Note: hotkey changes take effect after the next app restart.
+            Hotkey changes take effect immediately.
           </div>
         </div>
       </div>
