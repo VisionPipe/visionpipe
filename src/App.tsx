@@ -73,25 +73,55 @@ function AppInner() {
     await win.setFocus();
   }, []);
 
-  // ── On mount: set onboarding mode immediately, then fetch permission state.
-  // Order matters: the welcome card must be visible before osascript fires
-  // its TCC prompt for System Events.
+  // ── On mount: decide whether to show onboarding or jump straight to HistoryHub
+  //
+  // First-run / permissions-revoked path: show the onboarding card. Welcome
+  //   card MUST be visible before osascript fires its TCC prompt for System
+  //   Events, so we render onboarding-then-check, not check-then-render.
+  //
+  // Returning-user path: if localStorage says they've dismissed onboarding
+  //   before AND all three required permissions silently re-verify, skip
+  //   onboarding and go straight to HistoryHub. Tauri window starts hidden
+  //   (`visible: false` in tauri.conf.json), so the window doesn't flash
+  //   anything during the brief check.
   useEffect(() => {
     (async () => {
+      const previouslyOnboarded = localStorage.getItem("vp-onboarded") === "1";
+
+      if (previouslyOnboarded) {
+        try {
+          const status = await invoke<PermissionStatus>("check_permissions");
+          setPermissions(status);
+          const allGranted = !!(
+            status.screenRecording && status.systemEvents && status.accessibility
+          );
+          if (allGranted) {
+            setMode("idle");
+            await resizeForHistoryHub();
+            const win = getCurrentWindow();
+            await win.show();
+            await win.setFocus();
+            return;
+          }
+          // Permission was revoked since last launch — fall through to
+          // onboarding so the user can re-grant whatever's missing.
+        } catch (err) {
+          console.error("[VisionPipe] silent permission check failed:", err);
+          // Treat errors as "not all granted" and show onboarding.
+        }
+      }
+
       setMode("onboarding");
       await showOnboardingWindow();
       try {
         const status = await invoke<PermissionStatus>("check_permissions");
         setPermissions(status);
-        // Welcome card stays visible on every launch until the user clicks
-        // "Get Started". The previous "auto-hide if all permissions granted"
-        // logic made the app appear to flash-and-quit because the only
-        // visible UI was hidden one frame after mount.
       } catch (err) {
         console.error("[VisionPipe] check_permissions failed:", err);
       }
     })();
-  }, [showOnboardingWindow]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Auto-poll permissions every 2 s while onboarding is visible ──
   useEffect(() => {
@@ -356,6 +386,12 @@ function AppInner() {
   // Previously hid the window, but now that idle = HistoryHub the user
   // needs to actually see something.
   const dismissOnboarding = useCallback(async () => {
+    // Durable record that the user has been through the onboarding flow.
+    // On future launches, we silently re-verify permissions and skip
+    // the welcome card entirely if they're still all granted. The flag
+    // gates the skip-path; revoking a permission still falls through
+    // to onboarding because the silent check_permissions returns false.
+    localStorage.setItem("vp-onboarded", "1");
     setMode("idle");
     await resizeForHistoryHub();
     const win = getCurrentWindow();

@@ -22,14 +22,22 @@ const CREDIT_STORE_FILE: &str = "visionpipe.json";
 /// Key inside the store JSON.
 const CREDIT_BALANCE_KEY: &str = "credit_balance";
 
-/// Read the persisted balance, defaulting to 0 for fresh installs.
-/// Default is intentionally 0 (NOT 1,000,000 like the old branch did).
+/// Default balance for fresh installs. 1,000 credits = $10.00 of capture
+/// budget (1 credit per screenshot + 10 s-free audio tier). Per the
+/// 2026-05-06 product call: until the Buy Credits backend ships,
+/// shipping with 0 credits walls every new user behind devtools console
+/// gymnastics. 1000 is enough for first-day exploration without giving
+/// away the farm.
+const DEFAULT_CREDIT_BALANCE: u64 = 1000;
+
+/// Read the persisted balance, defaulting to DEFAULT_CREDIT_BALANCE for
+/// fresh installs (no store file or no credit_balance key).
 fn load_balance(app: &AppHandle) -> u64 {
     app.store(CREDIT_STORE_FILE)
         .ok()
         .and_then(|s| s.get(CREDIT_BALANCE_KEY))
         .and_then(|v| v.as_u64())
-        .unwrap_or(0)
+        .unwrap_or(DEFAULT_CREDIT_BALANCE)
 }
 
 /// Persist the balance to the store. Best-effort; logs errors.

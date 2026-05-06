@@ -4,6 +4,22 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:50 PDT — skip onboarding + default 1000 credits
+
+### Summary of changes since last update
+Two small UX fixes destined for v0.9.3: (1) skip the Welcome / Get Started screen on launch when the user has been through onboarding once and all required permissions are still granted, (2) default fresh-install credit balance bumped from 0 to 1,000 so testers aren't walled behind devtools-console gymnastics until the Buy Credits backend ships.
+
+### Detail of changes made:
+- **`src/App.tsx` mount effect** — branches on `localStorage.getItem("vp-onboarded")`. If flag set AND `check_permissions` silently returns all three required permissions granted, jump straight to `idle` mode + HistoryHub-sized window. Tauri window starts hidden so the brief silent check doesn't flash anything. Falls through to onboarding when flag missing or any permission revoked.
+- **`src/App.tsx dismissOnboarding`** — sets `localStorage.setItem("vp-onboarded", "1")` before transitioning to idle. One-way switch; tray menu → "Show Onboarding…" still works for manual re-entry.
+- **`src-tauri/src/lib.rs`** — new `DEFAULT_CREDIT_BALANCE = 1000` constant replaces the prior `unwrap_or(0)` in `load_balance`. Fresh installs land with 1000 credits ($10 of capture budget). Existing users with a non-zero balance in `~/Library/Application Support/com.visionpipe.desktop/visionpipe.json` are unaffected.
+
+### Potential concerns to address:
+- Existing testers with 0 credits won't auto-bump — they need to delete the store file, edit the value, or use `add_credits` via devtools. Could add a one-time migration but that's surprising behavior. Flagged for the user.
+- The 1000 default is a temporary bridge until Buy Credits ships against `api.visionpipe.ai`. When the backend is real, decide whether new users still get a credit-grant via the server (e.g. signup bonus) or whether the default drops back to 0 and Buy Credits is mandatory before first send.
+
+---
+
 ## Progress Update as of 2026-05-06 13:37 PDT — v0.9.2
 *(Most recent updates at top)*
 
