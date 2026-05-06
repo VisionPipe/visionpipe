@@ -4,6 +4,19 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 14:50 PDT — capabilities.json schema regen for v0.9.5
+
+### Summary of changes since last update
+Auto-regenerated `src-tauri/gen/schemas/capabilities.json` after the dialog-ACL additions in commit `039b3f0`. Tauri's build script regenerates this schema file whenever `capabilities/default.json` changes; it had been regenerated locally but not committed, which blocked `release.sh`'s preflight (clean-tree check).
+
+### Detail of changes made:
+- **`src-tauri/gen/schemas/capabilities.json`**: regenerated to reflect the three new dialog permissions (`dialog:allow-confirm`, `dialog:allow-message`, `dialog:allow-ask`). Auto-generated; human-irrelevant; committed only because preflight requires a clean tree.
+
+### Potential concerns to address:
+- This regen-then-commit dance is recurring whenever capabilities change. Could add `gen/schemas/` to a special-cased preflight skip OR auto-commit the regen as part of release.sh. Flagging for future polish; not worth changing right now.
+
+---
+
 ## Progress Update as of 2026-05-06 14:40 PDT — diagnostic-bundle bugs (dialog ACL + hotkey re-register)
 
 ### Summary of changes since last update
