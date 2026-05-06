@@ -10,6 +10,7 @@ import { useSession } from "../state/session-context";
 import { useMic } from "../state/mic-context";
 import { useCredit } from "../state/credit-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
+import { generateBundleName } from "../lib/bundle-name";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -66,31 +67,34 @@ export function SessionWindow() {
       return;
     }
 
+    const bundleFilename = generateBundleName(session);
+
     try {
       const md = renderMarkdown(session);
       const path = await invoke<string>("save_and_copy_markdown", {
         folder: session.folder,
         markdown: md,
+        filename: bundleFilename,
       });
       setToast({
         kind: "ok",
-        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript (${deductedCost.total} cr deducted). Paste as text in chat, OR paste in Finder to drop a .md file (saved at ${path}).`,
+        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript (${deductedCost.total} cr deducted). Paste as text in chat, OR paste in Finder to drop ${bundleFilename} (saved at ${path}).`,
       });
     } catch (err) {
       console.error("[VisionPipe] Copy & Send failed:", err);
       // Last-resort fallback: text-only clipboard write so the user gets
       // *something* for the credits they just spent. If even this fails,
-      // they can grab transcript.md from the session folder.
+      // they can grab the markdown file from the session folder.
       try {
         const md = renderMarkdown(session);
         await writeText(md);
         const bytes = new TextEncoder().encode(md);
         await invoke("write_session_file", {
-          folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
+          folder: session.folder, filename: bundleFilename, bytes: Array.from(bytes),
         });
         setToast({
           kind: "ok",
-          text: `Copied as text only (file-clipboard failed). transcript.md is in the session folder. ${deductedCost.total} cr deducted.`,
+          text: `Copied as text only (file-clipboard failed). ${bundleFilename} is in the session folder. ${deductedCost.total} cr deducted.`,
         });
       } catch (innerErr) {
         setToast({

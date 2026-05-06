@@ -4,6 +4,36 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-06 09:25 PDT — v0.6.1 (descriptive markdown filename)
+
+### Summary of changes since last update
+Replaced the hardcoded `transcript.md` bundle filename with a descriptive, content-aware name: `VisionPipe-{YYYY-MM-DD-HHmm}-{N}shots-{topic}.md`. The topic falls back through caption → URL path → window title → app name (or is omitted if nothing's available). Backwards compat: HistoryHub still finds legacy `transcript.md` files for old sessions. 11 new Vitest tests for the filename helper; full suite is 6 files, 39 tests, all passing.
+
+### Detail of changes made:
+- **`src/lib/bundle-name.ts`** (new): `generateBundleName(session)` returns the descriptive `.md` filename. Reuses the existing `sanitizeContext` helper from `canonical-name.ts` for consistency with screenshot naming. Applies the same `APP_NAME_NORMALIZATION` map (Google Chrome → Chrome, etc.). Length-capped at 180 chars excluding extension; if the topic pushes past the cap, the topic is truncated rather than the timestamp/count prefix. Timestamp is formatted in local time so it matches what the user expects, not UTC.
+- **`src/lib/__tests__/bundle-name.test.ts`** (new): 11 tests covering the four-tier topic fallback, plural/singular `shot(s)`, app-name normalization, path-unsafe character stripping, length cap, graceful no-topic fallback, and unparseable timestamps.
+- **`src/components/SessionWindow.tsx`**: `onCopyAndSend` now generates the bundle filename via `generateBundleName(session)` and passes it through to the new `save_and_copy_markdown(folder, markdown, filename)` signature. Both the success-path toast and the fallback text-only-clipboard toast reference the actual filename instead of the legacy `transcript.md` string.
+- **`src-tauri/src/lib.rs` (`save_and_copy_markdown`)**: Signature now takes an optional `filename: Option<String>`. Defaults to `transcript.md` for backwards compatibility (legacy callers and the JS fallback path). Path is `<folder>/<filename>`.
+- **`src-tauri/src/lib.rs` (`build_session_summary`)**: `transcript_md_path` discovery rewritten. Looks for any `VisionPipe-*.md` file in the session folder (most recent mtime wins if multiple exist — happens when the user re-sends a session after edits). Falls back to legacy `transcript.md` if no descriptive filename is present. This means HistoryHub keeps working for both old and new sessions without any migration.
+- **`src/components/HistoryHub.tsx`**: `onCopy` no longer hardcodes `transcript.md`. Extracts the basename from `transcriptMdPath` for the existing-file path, and generates a fresh descriptive name via `generateBundleName` for the re-render-from-JSON path. Also passes the filename through `save_and_copy_markdown` so the rewrite uses the descriptive name even for legacy sessions on first re-send.
+
+### Filename examples:
+- `VisionPipe-2026-05-06-0904-3shots-github-pr-42-review.md` (caption-driven topic)
+- `VisionPipe-2026-05-06-1023-5shots-credit-context-tsx.md` (window-title-driven)
+- `VisionPipe-2026-05-06-1505-2shots-Slack.md` (app-name fallback)
+- `VisionPipe-2026-05-06-0904-1shot.md` (no topic available)
+
+### Verified:
+- `cargo build -p visionpipe`: clean (8 pre-existing warnings).
+- `tsc --noEmit`: exit 0.
+- `vitest run` (full): 6 files, 39 tests, all pass.
+
+### Potential concerns to address:
+- **Re-send behavior**: if a user sends a session, then deletes a screenshot, then sends again, the second send produces a different filename (different shot count and possibly a different topic). The backend's "most recent mtime wins" tiebreak handles this, but the OLD .md file stays on disk. Could add a "clean stale .md siblings" pass on re-send if disk litter becomes annoying.
+- **Topic from caption uses just screenshot 1's caption** — for longer sessions, the most descriptive caption might be on screenshot 3. Could improve later by picking the longest non-empty caption, but YAGNI for now.
+
+---
+
 ## Progress Update as of 2026-05-06 09:00 PDT — v0.6.1 (frontend wiring)
 
 ### Summary of changes since last update
