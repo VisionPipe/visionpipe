@@ -668,16 +668,45 @@ fn save_diagnostic_bundle() -> Result<String, String> {
     Ok(zip_path)
 }
 
-/// Request microphone access via native API (shows system prompt from VisionPipe).
+/// Request microphone access via native API (shows system prompt from
+/// VisionPipe). Routed through `spawn_blocking` because the underlying
+/// ObjC FFI uses a semaphore-blocking pattern that would otherwise stall
+/// a tokio worker. Returns Ok(true) when granted, Ok(false) when denied,
+/// and Err on timeout — the frontend treats Err as "we never heard back,
+/// please open System Settings yourself" rather than silently reporting
+/// denied.
 #[tauri::command]
 async fn request_microphone_access() -> Result<bool, String> {
-    Ok(speech::request_mic_auth())
+    let outcome = tauri::async_runtime::spawn_blocking(speech::request_mic_auth)
+        .await
+        .map_err(|e| format!("blocking task error: {}", e))?;
+    match outcome {
+        speech::AuthOutcome::Granted => Ok(true),
+        speech::AuthOutcome::Denied => Ok(false),
+        speech::AuthOutcome::TimedOut => Err(
+            "macOS didn't respond to the microphone permission request. \
+             Open System Settings → Privacy & Security → Microphone and \
+             enable Vision|Pipe manually.".to_string()
+        ),
+    }
 }
 
-/// Request speech recognition access via native API (shows system prompt from VisionPipe).
+/// Request speech recognition access via native API. Same spawn_blocking
+/// + timeout-as-Err pattern as `request_microphone_access`.
 #[tauri::command]
 async fn request_speech_recognition() -> Result<bool, String> {
-    Ok(speech::request_speech_auth())
+    let outcome = tauri::async_runtime::spawn_blocking(speech::request_speech_auth)
+        .await
+        .map_err(|e| format!("blocking task error: {}", e))?;
+    match outcome {
+        speech::AuthOutcome::Granted => Ok(true),
+        speech::AuthOutcome::Denied => Ok(false),
+        speech::AuthOutcome::TimedOut => Err(
+            "macOS didn't respond to the speech-recognition permission request. \
+             Open System Settings → Privacy & Security → Speech Recognition \
+             and enable Vision|Pipe manually.".to_string()
+        ),
+    }
 }
 
 #[tauri::command]

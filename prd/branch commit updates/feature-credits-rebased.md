@@ -4,6 +4,31 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-06 10:15 PDT — v0.6.1 (fix mic/speech permission deadlock)
+
+### Summary of changes since last update
+User reported the "Enable voice notes" modal was stuck on "Asking macOS..." after clicking Grant access. Root cause: the ObjC FFI for both `mic_request_auth` and `speech_request_auth` blocks the calling thread on a `dispatch_semaphore_wait`. Apple's `SFSpeechRecognizer.requestAuthorization` dispatches its completion handler to the main queue — so if Tauri's async command runs on (or contends with) main, the completion never fires and the semaphore times out. Fixed three ways: (1) check the cached auth status first and short-circuit if already determined, (2) route the FFI calls through `tauri::async_runtime::spawn_blocking` so the blocking is on a dedicated blocking task pool, never on a runtime worker, (3) distinguish a TIMEOUT from an explicit DENIAL — the modal now surfaces an error banner with an "Open System Settings →" button if macOS never answers, instead of silently treating no-response as denied.
+
+### Detail of changes made:
+- **`src-tauri/src/speech_bridge.m`** (`speech_request_auth` and `mic_request_auth`): Both now check `[SFSpeechRecognizer authorizationStatus]` / `[AVCaptureDevice authorizationStatusForMediaType:]` first and short-circuit (return 1/0) if the status is already Authorized/Denied/Restricted — `requestAuthorization` only shows the prompt for the `notDetermined` state, so calling it for already-decided states is wasteful and can mask deadlocks. New `-1` return value indicates the 60-second timeout fired (was 30 s; bumped because some users need longer to actually find the prompt). Added comments explaining the threading caveat.
+- **`src-tauri/src/speech.rs`**: New `AuthOutcome` enum (`Granted` / `Denied` / `TimedOut`) replaces the old `bool` return type from `request_speech_auth` and `request_mic_auth`. Maps the ObjC `-1` sentinel to `TimedOut`. Switched logging from `eprintln!` to `log::info!` so the result actually shows up in `~/Library/Logs/com.visionpipe.desktop/visionpipe.log` instead of stderr (which goes nowhere in a production .app).
+- **`src-tauri/src/lib.rs`** (Tauri commands): `request_microphone_access` and `request_speech_recognition` now wrap their FFI call in `tauri::async_runtime::spawn_blocking(...)` so the blocking semaphore wait runs on the blocking task pool, never on a runtime worker. Both map `AuthOutcome::TimedOut` to `Err(message)` with concrete instructions ("Open System Settings → Privacy & Security → Microphone and enable Vision|Pipe manually") instead of silently returning `Ok(false)` — the frontend differentiates "user said no" from "we never got an answer."
+- **`src/components/MicOnboardingModal.tsx`**: New `errorBanner` state. Catches the timeout `Err` from each invoke, surfaces a sienna-bordered error banner with the full error message and an "Open System Settings →" button that invokes `open_settings_pane` with the matching pane (`microphone` / `speech_recognition`). When a timeout occurs, the modal returns to `idle` state instead of `done` so the user can retry. The "Maybe later" button still works to dismiss without granting.
+
+### Verified:
+- `cargo build -p visionpipe`: clean (8 pre-existing warnings).
+- `tsc --noEmit`: exit 0.
+- `vitest run` (full): 7 files, 46 tests, all pass.
+
+### Why the user saw this on the *production* .app rather than dev:
+The user is running `/Applications/VisionPipe.app` (an older shipped build). The deadlock pattern existed in main before this branch — the v0.5.x → v0.6.x rewrites preserved the semaphore-blocking ObjC pattern. The fix is forward-only; once this branch ships, fresh installs won't hit it.
+
+### Potential concerns to address:
+- **Existing users with a previously-denied state** can't re-trigger the macOS prompt programmatically — that's a TCC restriction, not our bug. The new error banner surfaces the System Settings link explicitly when this happens.
+- **`tauri::async_runtime::spawn_blocking`** uses Tauri's own runtime spawn helper which falls back to tokio's `spawn_blocking` on a tokio runtime. Should always work, but if the app's runtime config changes in the future this could break — flagged for visibility.
+
+---
+
 ## Progress Update as of 2026-05-06 09:45 PDT — v0.6.1 (correction: hotkey pill + tighter window in Onboarding too)
 
 ### Summary of changes since last update

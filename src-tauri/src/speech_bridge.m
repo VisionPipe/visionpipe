@@ -8,10 +8,26 @@ int speech_auth_status(void) {
     return (int)[SFSpeechRecognizer authorizationStatus];
 }
 
-// Request speech recognition authorization. Blocks until the user responds.
-// Returns 1 if authorized, 0 otherwise.
+// Request speech recognition authorization. Blocks until the user responds
+// or 60 seconds elapse. Returns 1 if authorized, 0 otherwise, -1 on timeout.
+//
+// IMPORTANT: must NOT be called from the main thread. Apple's
+// `SFSpeechRecognizer requestAuthorization:` dispatches its completion
+// handler to the main queue — so if main is blocked waiting on the
+// semaphore, the handler never runs and we deadlock until the timeout.
+// Rust callers route through `tauri::async_runtime::spawn_blocking`.
+//
+// Defensive: if status is already determined (authorized/denied/restricted),
+// short-circuit and return without prompting. macOS won't re-prompt after
+// the first denial anyway — calling requestAuthorization in that state
+// just returns the cached status.
 int speech_request_auth(void) {
-    __block int result = 0;
+    SFSpeechRecognizerAuthorizationStatus current = [SFSpeechRecognizer authorizationStatus];
+    if (current == SFSpeechRecognizerAuthorizationStatusAuthorized) return 1;
+    if (current == SFSpeechRecognizerAuthorizationStatusDenied) return 0;
+    if (current == SFSpeechRecognizerAuthorizationStatusRestricted) return 0;
+
+    __block int result = -1;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
     [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
@@ -19,14 +35,26 @@ int speech_request_auth(void) {
         dispatch_semaphore_signal(sem);
     }];
 
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC));
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
     return result;
 }
 
-// Request microphone access. Blocks until the user responds.
-// Returns 1 if authorized, 0 otherwise.
+// Request microphone access. Blocks until the user responds or 60 seconds
+// elapse. Returns 1 if authorized, 0 otherwise, -1 on timeout.
+//
+// Same threading caveat as speech_request_auth: must not be called from
+// the main thread. AVCaptureDevice's completion handler is dispatched to
+// "an arbitrary queue" per Apple's docs (in practice, often a global
+// concurrent queue), so it's less likely to deadlock than the speech
+// handler — but routing through spawn_blocking on the Rust side keeps
+// behavior consistent.
 int mic_request_auth(void) {
-    __block int result = 0;
+    AVAuthorizationStatus current = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (current == AVAuthorizationStatusAuthorized) return 1;
+    if (current == AVAuthorizationStatusDenied) return 0;
+    if (current == AVAuthorizationStatusRestricted) return 0;
+
+    __block int result = -1;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
     [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
@@ -34,7 +62,7 @@ int mic_request_auth(void) {
         dispatch_semaphore_signal(sem);
     }];
 
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC));
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
     return result;
 }
 
