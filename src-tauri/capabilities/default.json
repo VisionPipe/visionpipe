@@ -26,6 +26,7 @@
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-read-text",
     "dialog:default",
+    "dialog:allow-save",
     "global-shortcut:default",
     "global-shortcut:allow-register",
     "log:default",

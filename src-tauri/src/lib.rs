@@ -771,6 +771,18 @@ async fn save_hotkey_config(cfg: hotkey_config::HotkeyConfig) -> Result<(), Stri
     hotkey_config::save(&cfg)
 }
 
+/// Write text content to an arbitrary absolute path. Used by the
+/// "Save to disk" affordance on the session footer: the frontend prompts
+/// the user for a destination via the dialog plugin, then calls this with
+/// the chosen path. Caller is responsible for path validation; this
+/// command intentionally accepts any writable path so the user can pick
+/// (e.g.) Desktop, Downloads, or an iCloud Drive subdir.
+#[tauri::command]
+async fn write_text_to_path(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content)
+        .map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
 /// Read current credit balance from the in-memory ledger.
 #[tauri::command]
 async fn get_credit_balance(
@@ -1120,6 +1132,7 @@ pub fn run() {
             reveal_in_finder,
             read_session_file,
             refresh_tray,
+            write_text_to_path,
             get_credit_balance,
             add_credits,
             preview_bundle_cost,

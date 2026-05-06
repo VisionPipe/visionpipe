@@ -12,6 +12,7 @@ import { useCredit } from "../state/credit-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
 import { generateBundleName } from "../lib/bundle-name";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 
 export function SessionWindow() {
@@ -112,6 +113,80 @@ export function SessionWindow() {
     return () => window.removeEventListener("vp-copy-and-send", handler);
   }, [onCopyAndSend]);
 
+  // ── Save bundle to user-chosen disk location ──
+  // Same pricing as Copy to Clipboard (deduct first, then write), but
+  // writes to a Finder-chosen path instead of touching the clipboard.
+  // Also writes the canonical copy to the session folder so HistoryHub
+  // can find it later via the existing transcript_md_path discovery.
+  const onSaveToDisk = useCallback(async () => {
+    if (!state.session) {
+      setToast({ kind: "err", text: "No active session to save." });
+      return;
+    }
+    const session = state.session;
+    const defaultName = generateBundleName(session);
+    let targetPath: string | null;
+    try {
+      targetPath = await save({
+        title: "Save VisionPipe bundle",
+        defaultPath: defaultName,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+    } catch (err) {
+      console.error("[VisionPipe] save dialog failed:", err);
+      setToast({ kind: "err", text: `Save dialog failed: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    if (!targetPath) return; // user cancelled the dialog — no charge
+
+    let deductedCost;
+    try {
+      deductedCost = await deductForBundle();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setToast({ kind: "err", text: `Cannot save: ${msg}. Buy more credits to continue.` });
+      return;
+    }
+
+    try {
+      const md = renderMarkdown(session);
+      // Write to user's chosen path...
+      await invoke("write_text_to_path", { path: targetPath, content: md });
+      // ...and also to the session folder so the bundle stays
+      // discoverable from HistoryHub.
+      await invoke("save_and_copy_markdown", {
+        folder: session.folder,
+        markdown: md,
+        filename: defaultName,
+      }).catch((err) => {
+        // The session-folder write is best-effort here — if it fails the
+        // user still got their disk save, which is what they asked for.
+        console.warn("[VisionPipe] session-folder mirror failed:", err);
+      });
+      setToast({
+        kind: "ok",
+        text: `Saved ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript to ${targetPath} (${deductedCost.total} cr deducted).`,
+      });
+    } catch (err) {
+      setToast({
+        kind: "err",
+        text: `Save failed AFTER deducting ${deductedCost.total} credits: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }, [state.session, deductForBundle]);
+
+  // ── Cancel the active session ──
+  // Same effect as the overflow menu's "New session" but with confirmation,
+  // since the Footer button is more prominent and easier to mis-click.
+  // Does NOT deduct credits — nothing was sent.
+  const onCancel = useCallback(async () => {
+    if (!confirm("Discard this session? Already-captured screenshots stay in the session folder, but the bundle won't be sent.")) return;
+    await mic.clearRecorder();
+    mic.closeDeepgram();
+    dispatch({ type: "END_SESSION" });
+    void invoke("refresh_tray").catch(() => {/* best-effort */});
+  }, [mic, dispatch]);
+
   if (!state.session) return null;
   const session = state.session;
 
@@ -184,6 +259,8 @@ export function SessionWindow() {
       </main>
       <Footer
         onCopyAndSend={onCopyAndSend}
+        onCancel={onCancel}
+        onSaveToDisk={onSaveToDisk}
         copyTooltip={
           currentBundleCost.total > balance
             ? `Need ${currentBundleCost.total - balance} more credit${currentBundleCost.total - balance === 1 ? "" : "s"} (cost ${currentBundleCost.total}, balance ${balance})`

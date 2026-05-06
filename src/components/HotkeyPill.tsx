@@ -91,26 +91,36 @@ export function HotkeyPill({ binding = "take_next_screenshot", label, size = "sm
       .catch(() => {/* keep stale value if reload fails */});
   };
 
-  const fontSize = size === "lg" ? 13 : 11;
-  const padY = size === "lg" ? 6 : 3;
-  const padX = size === "lg" ? 12 : 8;
+  // Size variants. Both are intentionally chunky — large glyphs on a
+  // softly-rounded pill so the shortcut reads as a tactile "press this"
+  // affordance, not a status badge. "lg" is the welcome-card CTA;
+  // "sm" is the in-text size used in HistoryHub captions ("or press X
+  // from anywhere") — sized so the keys are unmistakably ⌘⇧C even
+  // when scanning quickly, not a tiny inline badge.
+  const isLg = size === "lg";
+  const fontSize = isLg ? 32 : 22;
+  const padY = isLg ? 14 : 8;
+  const padX = isLg ? 22 : 14;
+  const radius = isLg ? 12 : 8;
+  const labelGap = isLg ? 12 : 8;
 
   return (
     <>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: labelGap }}>
         {label && <span style={{ color: C.textDim, fontSize }}>{label}</span>}
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
           title="Click to change keyboard shortcut"
           style={{
-            display: "inline-flex", alignItems: "center", gap: 2,
-            padding: `${padY}px ${padX}px`, borderRadius: 999,
+            display: "inline-flex", alignItems: "center", gap: isLg ? 10 : 2,
+            padding: `${padY}px ${padX}px`, borderRadius: radius,
             background: C.amber, color: C.deepForest,
             border: "none", cursor: "pointer",
             fontFamily: FONT_MONO, fontSize, fontWeight: 700,
-            letterSpacing: "0.5px",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            letterSpacing: isLg ? "1px" : "0.5px",
+            boxShadow: isLg ? "0 3px 6px rgba(0,0,0,0.3)" : "0 1px 2px rgba(0,0,0,0.2)",
+            lineHeight: 1,
           }}
         >
           {formatHotkey(combo)}

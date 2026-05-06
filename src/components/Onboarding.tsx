@@ -113,7 +113,7 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
               </p>
 
               <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 12, marginTop: 8 }}>
-                How to give your LLM eyes:
+                How to give your LLM vision:
               </div>
               <div style={{
                 display: "flex", alignItems: "center", gap: 12,

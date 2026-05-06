@@ -4,6 +4,35 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 12:23 PDT — v0.8.0
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.8.0 — Footer redesign (Cancel + Copy to Clipboard + Save to disk), bigger less-rounded hotkey pills in both Onboarding and HistoryHub, and a copy tweak ("eyes" → "vision").
+
+### Detail of changes made:
+
+- **Cancel button** added to the left of the primary action button. Outline-only style (transparent background with `borderLight` border) so it doesn't compete visually with the teal Copy button. Clicking confirms ("Discard this session?") then ends the session — same effect as the overflow menu's "New session" but more discoverable. Does NOT deduct credits, since nothing was sent.
+
+- **"Copy & Send" renamed to "Copy to Clipboard"** for clearer semantics — the action has always been to copy a markdown bundle to the macOS clipboard with both text and file representations; the new name says exactly that.
+
+- **"Save to disk" option** as an inline link beside the Copy button. Click opens a native Finder save dialog (default filename = the descriptive `VisionPipe-{date}-{N}shots-{topic}.md` from v0.7.0). On confirm: deducts credits same as Copy, writes the markdown to the chosen location, AND mirrors a copy into the session folder so HistoryHub keeps it. If the user cancels the save dialog, no credits are deducted. Driven by a new Rust Tauri command `write_text_to_path` and the `dialog:allow-save` capability.
+
+- **Bigger, less-rounded hotkey pills.** The welcome-card pill (lg variant) now renders glyphs at 32 px on a softly-rounded (12 px) chunky pill so ⌘⇧C is unmistakably the call-to-action. The HistoryHub pill (sm variant, used in "or press X from anywhere" and the empty-state message) bumped from 11 px → 22 px and from `borderRadius: 999` → 8 px so the keys are readable at a glance instead of looking like a status badge.
+
+- **Copy tweak:** "How to give your LLM eyes:" → "How to give your LLM vision:" on the welcome card.
+
+### Potential concerns to address:
+
+- The Cancel button uses `confirm()` (browser/system modal) — same pattern as the existing Delete Screenshot confirmation. Could be replaced with a custom themed dialog later for visual consistency.
+- Save to disk writes to BOTH the user-chosen path and the session folder. The session-folder write is best-effort (failures are logged but don't error the user-facing flow) so the user always gets the file they explicitly asked for.
+- The window-scoped Cmd+Enter hotkey still triggers Copy to Clipboard (not Save to disk). If users want a hotkey for Save to disk, that's a follow-up.
+
+---
+
+
 ## Progress Update as of 2026-05-06 12:18 PDT — v0.7.0
 *(Most recent updates at top)*
 
