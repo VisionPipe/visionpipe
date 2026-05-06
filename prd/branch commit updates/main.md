@@ -4,6 +4,32 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 12:31 PDT — v0.8.2
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.8.2 — keyboard shortcut display redesigned to match the Hex / native macOS keycap aesthetic, plus brand polish (orange `|` pipe, "Give Your LLM Vision" subtitle).
+
+### Detail of changes made:
+
+- **Hotkey display redesign — Hex-style key-caps.** The single-pill design (orange capsule with all keys jammed into one chip) is replaced with three separate dark-gray rounded-square key-caps (one per key in the combo), each with a subtle inset top highlight + bottom shadow so they read as physical keys rather than a flat badge. Keys are 56×56 px on the Welcome card (lg) and 36×36 px in HistoryHub (sm). The whole cluster is one click target — clicking any key opens the SettingsPanel for rebinding. Internally `HotkeyPill` now uses a `splitKeys()` helper that returns `["⌘", "⇧", "C"]` instead of the prior single concatenated string; the test file (`HotkeyPill.test.ts`) was updated to match.
+
+- **Orange `|` pipe in the brand wordmark.** `Vision|Pipe` now renders the pipe in `C.amber` everywhere — in the Onboarding title bar, the Welcome H1, and the SessionWindow Header. Helps the wordmark visually echo the orange-tinged brand accent.
+
+- **Subtitle copy:** "Give your LLM eyes." → "Give Your LLM Vision" on the Welcome card. Matches the earlier "How to give your LLM vision:" copy change and lands on a single consistent product tagline.
+
+- **Hint text update:** "Click the orange pill to change the shortcut." → "Click the keys to change the shortcut." since the pill is no longer a pill.
+
+### Potential concerns to address:
+
+- Key-cap colors (`#262b29` background, `#3a4240` border) are hardcoded rather than living in `lib/ui-tokens.ts`. Worth promoting to a `C.keyCap` token if more places end up needing this look.
+- The "Click the keys to change the shortcut." hint is only on the Welcome card — HistoryHub's smaller in-text usage doesn't surface it. The button's tooltip (`title="Click to change keyboard shortcut"`) carries the affordance there, which seems sufficient.
+
+---
+
+
 ## Progress Update as of 2026-05-06 12:27 PDT — v0.8.1
 *(Most recent updates at top)*
 

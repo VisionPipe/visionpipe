@@ -11,61 +11,62 @@ interface RustHotkeyConfig {
 }
 
 /**
- * Convert a stored hotkey string like "CmdOrCtrl+Shift+C" to display
- * glyphs like "⌘⇧C". Mac-only glyphs are used since VisionPipe is
- * Mac-only (per src-tauri/Cargo.toml's macOS-only deps).
+ * Convert a stored hotkey-combo string ("CmdOrCtrl+Shift+C") into the
+ * sequence of display glyphs ["⌘", "⇧", "C"]. Multi-character key names
+ * (e.g. "F1", "Tab") are kept as single units so they render in one
+ * key-cap. Mac-only glyphs are used since VisionPipe is Mac-only.
  */
-function formatHotkey(combo: string): string {
-  const parts = combo.split("+").map(p => p.trim());
-  return parts
-    .map(p => {
-      switch (p) {
-        case "CmdOrCtrl":
-        case "Cmd":
-        case "Meta":
-          return "⌘";
-        case "Shift":
-          return "⇧";
-        case "Alt":
-        case "Option":
-          return "⌥";
-        case "Ctrl":
-          return "⌃";
-        case "Enter":
-        case "Return":
-          return "↩";
-        case "Tab":
-          return "⇥";
-        case "Escape":
-        case "Esc":
-          return "⎋";
-        case "Space":
-          return "␣";
-        case "Backspace":
-          return "⌫";
-        default:
-          return p.length === 1 ? p.toUpperCase() : p;
-      }
-    })
-    .join("");
+function splitKeys(combo: string): string[] {
+  const parts = combo.split("+").map((p) => p.trim()).filter(Boolean);
+  return parts.map((p) => {
+    switch (p) {
+      case "CmdOrCtrl":
+      case "Cmd":
+      case "Meta":
+        return "⌘";
+      case "Shift":
+        return "⇧";
+      case "Alt":
+      case "Option":
+        return "⌥";
+      case "Ctrl":
+        return "⌃";
+      case "Enter":
+      case "Return":
+        return "↩";
+      case "Tab":
+        return "⇥";
+      case "Escape":
+      case "Esc":
+        return "⎋";
+      case "Space":
+        return "␣";
+      case "Backspace":
+        return "⌫";
+      default:
+        return p.length === 1 ? p.toUpperCase() : p;
+    }
+  });
 }
 
 interface Props {
   /**
-   * Which hotkey to display. Defaults to "takeNextScreenshot" since that's
-   * the marquee shortcut shown in the empty/idle states.
+   * Which hotkey to display. Defaults to "take_next_screenshot" since
+   * that's the marquee shortcut shown in the empty/idle states.
    */
   binding?: keyof RustHotkeyConfig;
-  /** Optional label shown to the left of the pill, e.g. "Capture:" */
+  /** Optional label shown to the left of the key cluster, e.g. "Capture:" */
   label?: string;
-  /** Optional size override — "sm" (default) or "lg" for prominent CTAs. */
+  /** "sm" (default) for inline text-flow contexts; "lg" for prominent CTAs. */
   size?: "sm" | "lg";
 }
 
 /**
- * Single orange pill rendering the keyboard shortcut. Click opens the
- * SettingsPanel so the user can rebind. Self-contained: holds its own
- * settings-open state and renders the modal when triggered.
+ * Mac-keycap-style keyboard shortcut display. Renders each key in the
+ * combo as its own dark, slightly-raised square — visually matching
+ * apps like Hex / Raycast / native macOS rather than a single colored
+ * pill. Click anywhere on the cluster to open the SettingsPanel and
+ * rebind. The displayed combo refreshes when the panel closes.
  */
 export function HotkeyPill({ binding = "take_next_screenshot", label, size = "sm" }: Props) {
   const [combo, setCombo] = useState<string>("CmdOrCtrl+Shift+C");
@@ -82,54 +83,67 @@ export function HotkeyPill({ binding = "take_next_screenshot", label, size = "sm
     })();
   }, [binding]);
 
-  // Refresh the displayed combo whenever the settings panel closes (the
-  // user may have just rebound it).
   const onSettingsClose = () => {
     setSettingsOpen(false);
     invoke<RustHotkeyConfig>("load_hotkey_config")
-      .then(cfg => setCombo(cfg[binding]))
-      .catch(() => {/* keep stale value if reload fails */});
+      .then((cfg) => setCombo(cfg[binding]))
+      .catch(() => {/* keep stale value */});
   };
 
-  // Size variants. Both are intentionally chunky — large glyphs on a
-  // softly-rounded pill so the shortcut reads as a tactile "press this"
-  // affordance, not a status badge. "lg" is the welcome-card CTA;
-  // "sm" is the in-text size used in HistoryHub captions ("or press X
-  // from anywhere") — sized so the keys are unmistakably ⌘⇧C even
-  // when scanning quickly, not a tiny inline badge.
   const isLg = size === "lg";
-  const fontSize = isLg ? 32 : 22;
-  const padY = isLg ? 14 : 8;
-  const padX = isLg ? 22 : 14;
+  // Key-cap dimensions modeled on Hex's settings UI: roughly square,
+  // softly-rounded, dark-gray with a subtle border + bottom shadow so
+  // the keys read as physical keycaps.
+  const minSize = isLg ? 56 : 36;
+  const fontSize = isLg ? 28 : 18;
   const radius = isLg ? 12 : 8;
-  const labelGap = isLg ? 12 : 8;
+  const gap = isLg ? 6 : 4;
+
+  const keys = splitKeys(combo);
 
   return (
     <>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: labelGap }}>
+      <button
+        type="button"
+        onClick={() => setSettingsOpen(true)}
+        title="Click to change keyboard shortcut"
+        style={{
+          display: "inline-flex", alignItems: "center", gap: isLg ? 12 : 8,
+          background: "transparent", border: "none", padding: 0,
+          cursor: "pointer", fontFamily: FONT_MONO,
+        }}
+      >
         {label && <span style={{ color: C.textDim, fontSize }}>{label}</span>}
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          title="Click to change keyboard shortcut"
-          style={{
-            display: "inline-flex", alignItems: "center", gap: isLg ? 10 : 2,
-            padding: `${padY}px ${padX}px`, borderRadius: radius,
-            background: C.amber, color: C.deepForest,
-            border: "none", cursor: "pointer",
-            fontFamily: FONT_MONO, fontSize, fontWeight: 700,
-            letterSpacing: isLg ? "1px" : "0.5px",
-            boxShadow: isLg ? "0 3px 6px rgba(0,0,0,0.3)" : "0 1px 2px rgba(0,0,0,0.2)",
-            lineHeight: 1,
-          }}
-        >
-          {formatHotkey(combo)}
-        </button>
-      </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap }}>
+          {keys.map((k, i) => (
+            <span
+              key={i}
+              style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                minWidth: minSize, height: minSize,
+                padding: `0 ${isLg ? 14 : 8}px`,
+                background: "#262b29",
+                color: "#ffffff",
+                border: "1px solid #3a4240",
+                borderRadius: radius,
+                fontFamily: FONT_MONO, fontSize, fontWeight: 700,
+                lineHeight: 1, letterSpacing: 0,
+                // Subtle "raised key" feel: top inner highlight +
+                // bottom outer shadow. Avoids the single-flat-pill look.
+                boxShadow:
+                  "inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 0 rgba(0,0,0,0.3), 0 4px 8px rgba(0,0,0,0.25)",
+                userSelect: "none",
+              }}
+            >
+              {k}
+            </span>
+          ))}
+        </span>
+      </button>
       {settingsOpen && <SettingsPanel onClose={onSettingsClose} />}
     </>
   );
 }
 
 // Exported for testing.
-export const __test__ = { formatHotkey };
+export const __test__ = { splitKeys };

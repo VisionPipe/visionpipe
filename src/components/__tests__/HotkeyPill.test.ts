@@ -1,36 +1,36 @@
 import { describe, it, expect } from "vitest";
 import { __test__ } from "../HotkeyPill";
 
-const { formatHotkey } = __test__;
+const { splitKeys } = __test__;
 
-describe("formatHotkey", () => {
-  it("renders Cmd+Shift+C as ⌘⇧C", () => {
-    expect(formatHotkey("CmdOrCtrl+Shift+C")).toBe("⌘⇧C");
+describe("splitKeys", () => {
+  it("splits CmdOrCtrl+Shift+C into [⌘, ⇧, C]", () => {
+    expect(splitKeys("CmdOrCtrl+Shift+C")).toEqual(["⌘", "⇧", "C"]);
   });
 
-  it("renders Cmd+Enter as ⌘↩", () => {
-    expect(formatHotkey("CmdOrCtrl+Enter")).toBe("⌘↩");
+  it("renders Cmd+Enter as [⌘, ↩]", () => {
+    expect(splitKeys("CmdOrCtrl+Enter")).toEqual(["⌘", "↩"]);
   });
 
-  it("renders Cmd+Shift+R as ⌘⇧R", () => {
-    expect(formatHotkey("CmdOrCtrl+Shift+R")).toBe("⌘⇧R");
+  it("renders Cmd+Shift+R as [⌘, ⇧, R]", () => {
+    expect(splitKeys("CmdOrCtrl+Shift+R")).toEqual(["⌘", "⇧", "R"]);
   });
 
-  it("renders Alt + Tab as ⌥⇥", () => {
-    expect(formatHotkey("Alt+Tab")).toBe("⌥⇥");
+  it("renders Alt+Tab as [⌥, ⇥]", () => {
+    expect(splitKeys("Alt+Tab")).toEqual(["⌥", "⇥"]);
   });
 
   it("uppercases lowercase single letters", () => {
-    expect(formatHotkey("CmdOrCtrl+a")).toBe("⌘A");
+    expect(splitKeys("CmdOrCtrl+a")).toEqual(["⌘", "A"]);
   });
 
-  it("preserves multi-char keys (e.g. F-keys)", () => {
-    expect(formatHotkey("CmdOrCtrl+F1")).toBe("⌘F1");
+  it("preserves multi-char keys (e.g. F-keys) as a single unit", () => {
+    expect(splitKeys("CmdOrCtrl+F1")).toEqual(["⌘", "F1"]);
   });
 
   it("handles Space, Backspace, Escape", () => {
-    expect(formatHotkey("CmdOrCtrl+Space")).toBe("⌘␣");
-    expect(formatHotkey("Backspace")).toBe("⌫");
-    expect(formatHotkey("Escape")).toBe("⎋");
+    expect(splitKeys("CmdOrCtrl+Space")).toEqual(["⌘", "␣"]);
+    expect(splitKeys("Backspace")).toEqual(["⌫"]);
+    expect(splitKeys("Escape")).toEqual(["⎋"]);
   });
 });

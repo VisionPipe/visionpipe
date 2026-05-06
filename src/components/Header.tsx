@@ -46,7 +46,7 @@ export function Header(props: Props) {
         borderBottom: `1px solid ${C.border}`, color: C.textBright, fontFamily: FONT_BODY,
       }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontWeight: 700, color: C.teal }}>Vision|Pipe</span>
+        <span style={{ fontWeight: 700, color: C.teal }}>Vision<span style={{ color: C.amber }}>|</span>Pipe</span>
         <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: C.textMuted, cursor: "pointer" }}
               title="Click to copy folder path"
               onClick={() => navigator.clipboard.writeText(session.folder)}>

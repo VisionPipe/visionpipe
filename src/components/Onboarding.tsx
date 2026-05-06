@@ -62,15 +62,17 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
           <span style={{
             fontFamily: FONT_MONO, fontSize: 11, color: C.textDim, letterSpacing: "0.04em",
           }}>
-            Vision<span style={{ color: C.teal }}>|</span>Pipe
+            Vision<span style={{ color: C.amber }}>|</span>Pipe
           </span>
           <VersionBadge />
         </div>
 
         <div style={{ flex: 1, padding: 24, overflowY: "auto", color: C.cream }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Welcome to Vision|Pipe</h1>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
+            Welcome to Vision<span style={{ color: C.amber }}>|</span>Pipe
+          </h1>
           <p style={{ margin: "4px 0 0 0", color: C.amber, fontSize: 14, fontWeight: 700 }}>
-            Give your LLM eyes.
+            Give Your LLM Vision
           </p>
 
           {!allGranted ? (
@@ -125,7 +127,7 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
                 <span>to capture your screen</span>
               </div>
               <p style={{ marginTop: 6, color: C.textDim, fontSize: 11 }}>
-                Click the orange pill to change the shortcut.
+                Click the keys to change the shortcut.
               </p>
 
               <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
