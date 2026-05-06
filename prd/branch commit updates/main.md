@@ -4,6 +4,31 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 14:17 PDT — v0.9.3
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.9.3 — skip the Welcome / Get Started screen on launch when permissions are still granted, AND default fresh-install credit balance to 1,000 (was 0) so testers aren't locked behind devtools console gymnastics until the Buy Credits backend ships.
+
+### Detail of changes made:
+
+- **`src/App.tsx` skip-onboarding-on-launch**: mount effect now branches on a `vp-onboarded` localStorage flag (set when the user dismisses onboarding). If the flag is set, silently call `check_permissions` and — if all three required permissions (Screen Recording, System Events, Accessibility) are still granted — go straight to `idle` mode + show HistoryHub. The Tauri window starts hidden (`visible: false` in `tauri.conf.json`), so the brief permissions check happens with nothing visible — no flash-and-quit. If the flag is missing, or any permission was revoked since last launch, fall through to the existing onboarding flow.
+
+- **`src/App.tsx dismissOnboarding`** writes `localStorage.setItem("vp-onboarded", "1")` before transitioning to idle. One-way switch — once user clicks "Get Started" once, every subsequent launch (with permissions still granted) skips the welcome card. Tray menu → "Show Onboarding…" still works for manual re-entry.
+
+- **`src-tauri/src/lib.rs DEFAULT_CREDIT_BALANCE = 1000`** replaces the prior `unwrap_or(0)` for fresh-install balance. 1,000 credits = $10.00 of capture budget. Until `api.visionpipe.ai` ships (Buy Credits backend), shipping with 0 walled every new user behind a devtools-console workaround. 1,000 is enough for first-day exploration without giving away the farm. Existing users with a non-zero `credit_balance` in their `visionpipe.json` store are unaffected — only fresh installs (no store file, or no `credit_balance` key) hit the new default.
+
+### Potential concerns to address:
+
+- A user already at 0 credits won't be auto-bumped to 1000 — they need to either delete their `~/Library/Application Support/com.visionpipe.desktop/visionpipe.json`, hand-edit the value, or use `add_credits` via devtools. Could add a one-time migration ("if balance = 0 AND no Buy Credits backend yet, bump to 1000") but that's surprising behavior; flagging here for visibility.
+- The skip-onboarding silent re-verify uses the same `check_permissions` Tauri command that runs `osascript` for System Events. On a known-granted system this returns silently. On a freshly-revoked system the osascript fires from a hidden process — functionally correct (we fall through to onboarding) but worth noting for future debugging.
+- `--skip-web` again because visionpipe-web is still on `update-website-copy-2026-05-04`.
+
+---
+
+
 ## Progress Update as of 2026-05-06 13:50 PDT — skip onboarding + default 1000 credits
 
 ### Summary of changes since last update
