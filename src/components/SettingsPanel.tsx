@@ -65,20 +65,36 @@ export function SettingsPanel({ onClose }: Props) {
   };
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
-    }}>
-      <div style={{
-        background: C.deepForest, borderRadius: 8,
-        minWidth: 560, maxWidth: 720, color: C.textBright, fontFamily: FONT_BODY,
-        border: `1px solid ${C.borderLight}`,
-        // Generous top padding so "Settings" doesn't collide with the
-        // macOS chrome / window-title area when the modal sits high in
-        // the viewport. 28 px elsewhere; 36 top.
-        padding: "36px 28px 24px 28px",
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+        // `align-items: center` clips the top of an overflowing modal because
+        // its margin goes negative. `flex-start` + an outer overflow-y keeps
+        // the WHOLE modal reachable on a short window (e.g. the 420 px
+        // HistoryHub size); `padding: 24` adds breathing room top + bottom.
+        display: "flex", alignItems: "flex-start", justifyContent: "center",
+        padding: 24,
+        overflowY: "auto",
+        zIndex: 1000,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.deepForest, borderRadius: 8,
+          width: "100%", maxWidth: 720, color: C.textBright, fontFamily: FONT_BODY,
+          border: `1px solid ${C.borderLight}`,
+          // 80 px left padding clears the macOS traffic-light controls
+          // when the modal sits at the very top of the window. Other
+          // sides keep the prior compact spacing.
+          padding: "20px 28px 20px 80px",
+          // Inset shadow so the modal reads as a card layered above the
+          // app, not as part of the chrome.
+          boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 20 }}>Settings</h2>
           <button onClick={onClose} style={{
             background: "transparent", border: "none", color: C.textBright,
@@ -93,7 +109,7 @@ export function SettingsPanel({ onClose }: Props) {
           onChange={(c) => persist({ ...cfg, takeNextScreenshot: c })}
           onReset={() => persist({ ...cfg, takeNextScreenshot: DEFAULTS.takeNextScreenshot })}
         />
-        <HotkeyBindingRow label="Copy & Send" scope="window"
+        <HotkeyBindingRow label="Copy to Clipboard" scope="window"
           combo={cfg.copyAndSend} otherBindings={others("copyAndSend")}
           onChange={(c) => persist({ ...cfg, copyAndSend: c })}
           onReset={() => persist({ ...cfg, copyAndSend: DEFAULTS.copyAndSend })}

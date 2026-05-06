@@ -4,6 +4,21 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 13:10 PDT — fix SettingsPanel overflow + label
+
+### Summary of changes since last update
+SettingsPanel modal rendered taller than the (newly tightened) HistoryHub window in v0.9.0, hiding the "Reset all to defaults" button and the bottom note. The modal also collided with the macOS traffic-light controls on top-left. Both visible immediately when opening Settings on a short window — should have been caught by manually clicking through Settings before shipping v0.9.0. Fix: outer overlay scrolls instead of using `align-items: center` (which clips overflow at the top), modal gets 80 px left padding to clear the dots, plus a backdrop-click handler that closes the modal. Also fixed the stale "Copy & Send" row label → "Copy to Clipboard" (matches the v0.8.0 Footer rename).
+
+### Detail of changes made:
+- **`src/components/SettingsPanel.tsx`**: outer overlay now uses `display: flex, align-items: flex-start, padding: 24, overflow-y: auto` so the modal scrolls inside the viewport when it's taller than the window. Inner card uses `width: 100%; max-width: 720` to keep the existing visual width while the outer wrapper handles overflow. Inner padding tweaked to `20px 28px 20px 80px` so the macOS chrome dots (top-left) don't overlap the Settings header. Backdrop click (clicking the dimmed area outside the card) now closes the modal — `e.target === e.currentTarget` guard so clicks inside the card don't bubble.
+- **`src/components/SettingsPanel.tsx`**: `<HotkeyBindingRow label="Copy & Send" />` → `label="Copy to Clipboard"`. The hotkey row label now matches the Footer button label introduced in v0.8.0.
+
+### Potential concerns to address:
+- Did not run `release.sh` because preflight would block (visionpipe-web is on `update-website-copy-2026-05-04` with 10 unpushed commits — by design until the user merges the website rewrite). The fix is on main; whoever runs `pnpm tauri dev` from main gets it. The next release after the website branch merges will include this fix.
+- This is the kind of layout bug a 30-second manual smoke test ("open Settings, can I click everything?") would have caught before shipping v0.9.0. Adding manual smoke-test discipline to the release flow per the user's earlier feedback about basic errors.
+
+---
+
 ## Progress Update as of 2026-05-06 13:30 PDT — release.sh sync guards (post-v0.9.0)
 
 ### Summary of changes since last update
