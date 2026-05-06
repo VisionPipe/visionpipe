@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { Camera, Folder, Clipboard, ChevronRight, ChevronDown } from "lucide-react";
 import { C, FONT_BODY } from "../lib/ui-tokens";
+import { HotkeyPill } from "./HotkeyPill";
 
 /**
  * Summary returned by the Rust `list_recent_sessions_cmd` Tauri command.
@@ -81,14 +82,22 @@ export function HistoryHub() {
   const onCopy = async (s: SessionSummary) => {
     setBusy(s.id);
     try {
-      // Pull the saved transcript.md if available; otherwise re-render from
-      // transcript.json. This keeps Copy useful even for sessions the user
-      // never explicitly "sent" (e.g. ones they ended via New Session).
+      // Pull the saved markdown bundle if available; otherwise re-render
+      // from transcript.json. This keeps Copy useful even for sessions
+      // the user never explicitly "sent" (e.g. ones they ended via New
+      // Session). The bundle filename used to be hardcoded transcript.md;
+      // newer sessions use a descriptive name like
+      // `VisionPipe-<date>-<count>shots-<topic>.md`. The backend resolves
+      // whichever exists into `transcriptMdPath`; we extract the basename
+      // here to re-read it. If we end up rendering fresh (no md on disk),
+      // we generate a new descriptive name below.
       let md: string | null = null;
+      let mdFilename: string | null = null;
       if (s.transcriptMdPath) {
         try {
+          mdFilename = s.transcriptMdPath.split("/").pop() ?? "transcript.md";
           const bytes = await invoke<number[]>("read_session_file", {
-            folder: s.folder, filename: "transcript.md",
+            folder: s.folder, filename: mdFilename,
           });
           md = new TextDecoder().decode(new Uint8Array(bytes));
         } catch {/* fall through to render */}
@@ -97,15 +106,17 @@ export function HistoryHub() {
         // Re-render from the JSON via the same renderer the live session uses.
         // Keeps formatting identical between Copy-from-history and live Copy & Send.
         const { renderMarkdown } = await import("../lib/markdown-renderer");
+        const { generateBundleName } = await import("../lib/bundle-name");
         const bytes = await invoke<number[]>("read_session_file", {
           folder: s.folder, filename: "transcript.json",
         });
         const json = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
         md = renderMarkdown(json);
+        mdFilename = generateBundleName(json);
       }
-      await invoke("save_and_copy_markdown", { folder: s.folder, markdown: md });
+      await invoke("save_and_copy_markdown", { folder: s.folder, markdown: md, filename: mdFilename });
       setToast({ kind: "ok", text: `Copied ${s.screenshotCount} screenshot${s.screenshotCount === 1 ? "" : "s"} + transcript. Paste in chat as text, or in Finder as a .md file.` });
-      // transcript.md may have just been created on disk; refresh row state.
+      // The .md file may have just been created on disk; refresh row state.
       await reload();
     } catch (err) {
       console.error("[VisionPipe] Copy from history failed:", err);
@@ -150,16 +161,20 @@ export function HistoryHub() {
           <Camera size={18} />
           New Screenshot Bundle
         </button>
-        <div style={{ marginTop: 8, fontSize: 11, color: C.textDim }}>
-          or press ⌘⇧C from anywhere
+        <div style={{ marginTop: 8, fontSize: 11, color: C.textDim, display: "flex", alignItems: "center", gap: 6 }}>
+          <span>or press</span>
+          <HotkeyPill />
+          <span>from anywhere</span>
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         {sessions === null && <div style={{ color: C.textMuted, fontSize: 13 }}>Loading…</div>}
         {sessions !== null && sessions.length === 0 && (
-          <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 40 }}>
-            No screenshot bundles yet. Hit ⌘⇧C or click the button above to create your first one.
+          <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 40, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
+            <span>No screenshot bundles yet. Hit</span>
+            <HotkeyPill />
+            <span>or click the button above to create your first one.</span>
           </div>
         )}
         {sessions?.map(s => {

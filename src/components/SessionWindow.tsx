@@ -8,13 +8,16 @@ import { ReRecordModal } from "./ReRecordModal";
 import { SettingsPanel } from "./SettingsPanel";
 import { useSession } from "../state/session-context";
 import { useMic } from "../state/mic-context";
+import { useCredit } from "../state/credit-context";
 import { renderMarkdown } from "../lib/markdown-renderer";
+import { generateBundleName } from "../lib/bundle-name";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { invoke } from "@tauri-apps/api/core";
 
 export function SessionWindow() {
   const { state, dispatch } = useSession();
   const mic = useMic();
+  const { deductForBundle, currentBundleCost, balance } = useCredit();
   const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
   const [rerecordSeq, setRerecordSeq] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -51,40 +54,56 @@ export function SessionWindow() {
       return;
     }
     const session = state.session;
+
+    // Deduct credits FIRST. If this throws (insufficient balance), abort
+    // before touching the clipboard so the user doesn't get the bundle
+    // without paying or pay without getting the bundle.
+    let deductedCost;
+    try {
+      deductedCost = await deductForBundle();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setToast({ kind: "err", text: `Cannot send: ${msg}. Buy more credits to continue.` });
+      return;
+    }
+
+    const bundleFilename = generateBundleName(session);
+
     try {
       const md = renderMarkdown(session);
       const path = await invoke<string>("save_and_copy_markdown", {
         folder: session.folder,
         markdown: md,
+        filename: bundleFilename,
       });
       setToast({
         kind: "ok",
-        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript. Paste as text in chat, OR paste in Finder to drop a .md file (saved at ${path}).`,
+        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript (${deductedCost.total} cr deducted). Paste as text in chat, OR paste in Finder to drop ${bundleFilename} (saved at ${path}).`,
       });
     } catch (err) {
       console.error("[VisionPipe] Copy & Send failed:", err);
-      // Last-resort fallback: try the old text-only clipboard write so the
-      // user gets *something*. They can manually copy the file from the
-      // session folder if needed.
+      // Last-resort fallback: text-only clipboard write so the user gets
+      // *something* for the credits they just spent. If even this fails,
+      // they can grab the markdown file from the session folder.
       try {
         const md = renderMarkdown(session);
         await writeText(md);
         const bytes = new TextEncoder().encode(md);
         await invoke("write_session_file", {
-          folder: session.folder, filename: "transcript.md", bytes: Array.from(bytes),
+          folder: session.folder, filename: bundleFilename, bytes: Array.from(bytes),
         });
         setToast({
           kind: "ok",
-          text: `Copied as text only (file-clipboard failed). transcript.md is in the session folder.`,
+          text: `Copied as text only (file-clipboard failed). ${bundleFilename} is in the session folder. ${deductedCost.total} cr deducted.`,
         });
       } catch (innerErr) {
         setToast({
           kind: "err",
-          text: `Copy & Send failed: ${err instanceof Error ? err.message : String(err)}`,
+          text: `Copy & Send failed AFTER deducting ${deductedCost.total} credits: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
     }
-  }, [state.session]);
+  }, [state.session, deductForBundle]);
 
   // Listen for the window-scoped Copy & Send hotkey dispatched by App.tsx.
   useEffect(() => {
@@ -165,8 +184,12 @@ export function SessionWindow() {
       </main>
       <Footer
         onCopyAndSend={onCopyAndSend}
-        copyTooltip={`Copies markdown for ${session.screenshots.length} screenshots + transcript`}
-        busy={false}
+        copyTooltip={
+          currentBundleCost.total > balance
+            ? `Need ${currentBundleCost.total - balance} more credit${currentBundleCost.total - balance === 1 ? "" : "s"} (cost ${currentBundleCost.total}, balance ${balance})`
+            : `Copies markdown for ${session.screenshots.length} screenshots + transcript (${currentBundleCost.total} cr)`
+        }
+        busy={currentBundleCost.total > balance}
       />
       {/* Toast for Copy & Send feedback */}
       {toast && (

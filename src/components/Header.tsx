@@ -1,4 +1,5 @@
 import { useSession } from "../state/session-context";
+import { useCredit } from "../state/credit-context";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
 import { VersionBadge } from "./VersionBadge";
 
@@ -54,6 +55,7 @@ export function Header(props: Props) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <CreditChip />
         <button
           onClick={props.onToggleMic}
           disabled={props.micPermissionDenied}
@@ -97,6 +99,32 @@ const btnStyle = (): React.CSSProperties => ({
   color: C.textBright, padding: "4px 10px", borderRadius: 4,
   cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12,
 });
+
+function CreditChip() {
+  const { balance, currentBundleCost } = useCredit();
+  const insufficient = currentBundleCost.total > balance;
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "4px 10px", borderRadius: 4,
+        background: "transparent",
+        border: `1px solid ${insufficient ? C.amber : C.borderLight}`,
+        color: insufficient ? C.amber : C.textBright,
+        fontFamily: FONT_MONO, fontSize: 11,
+      }}
+      title={
+        insufficient
+          ? `This bundle costs ${currentBundleCost.total} credits but you only have ${balance}.`
+          : `Bundle: ${currentBundleCost.screenshots} screenshot${currentBundleCost.screenshots === 1 ? "" : "s"} + ${currentBundleCost.audio} audio = ${currentBundleCost.total}. Balance: ${balance}.`
+      }
+    >
+      <span>Cost: {currentBundleCost.total} cr</span>
+      <span style={{ opacity: 0.6 }}>·</span>
+      <span>Balance: {balance} cr</span>
+    </div>
+  );
+}
 
 function OverflowMenu({ onNewSession, onOpenFolder, onOpenSettings }: {
   onNewSession: () => void; onOpenFolder: () => void; onOpenSettings: () => void;

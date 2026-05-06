@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionProvider, useSession } from "./state/session-context";
 import { MicProvider } from "./state/mic-context";
+import { CreditProvider } from "./state/credit-context";
 import { MicOnboardingModal } from "./components/MicOnboardingModal";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
@@ -55,10 +56,17 @@ function AppInner() {
   useEffect(() => { sessionRef.current = state.session; }, [state.session]);
 
   // ── Show/resize/center the window for onboarding ──
-  const showOnboardingWindow = useCallback(async () => {
+  // The onboarding card has two states: (a) one or more permissions
+  // missing → renders three permission rows + footer (~620 px tall), or
+  // (b) all granted → renders just the welcome line, hotkey pill, and
+  // Get Started button (~340 px tall). We size the window to whichever
+  // state is showing so the "all set" screen doesn't end with a wall of
+  // empty deep-forest background below the button.
+  const showOnboardingWindow = useCallback(async (compact: boolean = false) => {
     const win = getCurrentWindow();
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
-    await win.setSize(new LogicalSize(620, 680));
+    const height = compact ? 360 : 680;
+    await win.setSize(new LogicalSize(620, height));
     await win.setAlwaysOnTop(false);
     await win.center();
     await win.show();
@@ -97,6 +105,23 @@ function AppInner() {
     return () => clearInterval(interval);
   }, [mode]);
 
+  // ── Resize onboarding window when entering the "all set" state ──
+  // The Onboarding component renders a much shorter card when all three
+  // required permissions are granted. Keeping the window at 680 px tall
+  // leaves ~340 px of empty deep-forest background below the Get Started
+  // button. Watch the permissions state and shrink the window the moment
+  // it flips to all-granted. Depend on the boolean (not the permissions
+  // object reference) so we don't re-fire every 2 s while polling.
+  const allRequiredGranted = !!(
+    permissions?.screenRecording &&
+    permissions?.systemEvents &&
+    permissions?.accessibility
+  );
+  useEffect(() => {
+    if (mode !== "onboarding") return;
+    void showOnboardingWindow(allRequiredGranted);
+  }, [mode, allRequiredGranted, showOnboardingWindow]);
+
   // ── Listen for tray menu "Show Onboarding" event ──
   useEffect(() => {
     const unlisten = listen("show-onboarding", async () => {
@@ -125,8 +150,16 @@ function AppInner() {
         const scale = monitor.scaleFactor ?? 1;
         const monitorW = monitor.size.width;
         const monitorH = monitor.size.height;
+        // Width: same as before — wide enough for thumbnail rows + actions.
         const targetW = Math.max(Math.round(900 * scale), Math.min(Math.round(1400 * scale), Math.round(monitorW * 0.55)));
-        const targetH = Math.max(Math.round(640 * scale), Math.min(Math.round(900 * scale), Math.round(monitorH * 0.75)));
+        // Height: shrunken from prior 640-900 px range. The HistoryHub
+        // typically shows a list whose natural height is ~80-120 px per
+        // row plus ~140 px of chrome (top-bar + new-bundle button + a
+        // small tip footer); with 0-3 sessions, the old 800+ px window
+        // had a wall of empty deep-forest background below the list.
+        // 420-720 keeps power users with many sessions happy (the list
+        // still scrolls) but doesn't overwhelm the empty/idle state.
+        const targetH = Math.max(Math.round(420 * scale), Math.min(Math.round(720 * scale), Math.round(monitorH * 0.55)));
         const targetX = monitor.position.x + Math.round((monitorW - targetW) / 2);
         const targetY = monitor.position.y + Math.round((monitorH - targetH) / 2);
         await win.setSize(new PhysicalSize(targetW, targetH));
@@ -623,7 +656,9 @@ function AppInner() {
 export default function App() {
   return (
     <SessionProvider>
-      <AppInner />
+      <CreditProvider>
+        <AppInner />
+      </CreditProvider>
     </SessionProvider>
   );
 }

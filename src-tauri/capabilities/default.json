@@ -29,6 +29,7 @@
     "global-shortcut:default",
     "global-shortcut:allow-register",
     "log:default",
-    "shell:default"
+    "shell:default",
+    "store:default"
   ]
 }

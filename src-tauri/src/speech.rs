@@ -18,11 +18,36 @@ pub fn is_speech_authorized() -> bool {
     unsafe { speech_auth_status() == 3 }
 }
 
-/// Request speech recognition authorization. Blocks until user responds.
-pub fn request_speech_auth() -> bool {
+/// Outcome of a TCC authorization request — distinguishes a timeout from
+/// an explicit denial. The Tauri command layer maps timeouts to an Err
+/// so the frontend can surface a "we never heard back" toast and direct
+/// the user to System Settings, instead of falsely reporting Denied.
+#[derive(Debug, Clone, Copy)]
+pub enum AuthOutcome {
+    Granted,
+    Denied,
+    TimedOut,
+}
+
+impl AuthOutcome {
+    fn from_objc(code: i32) -> Self {
+        match code {
+            1 => AuthOutcome::Granted,
+            0 => AuthOutcome::Denied,
+            _ => AuthOutcome::TimedOut, // -1 sentinel from speech_bridge.m
+        }
+    }
+}
+
+/// Request speech recognition authorization. Blocks the calling thread
+/// until the user responds or 60 seconds elapse. Callers MUST run this
+/// off the main thread (e.g. via `tauri::async_runtime::spawn_blocking`)
+/// because Apple's framework dispatches the completion handler to the
+/// main queue — blocking main here deadlocks until the timeout.
+pub fn request_speech_auth() -> AuthOutcome {
     let result = unsafe { speech_request_auth() };
-    eprintln!("[VisionPipe] Speech auth request result: {}", result);
-    result == 1
+    log::info!("[VisionPipe] Speech auth request result: {}", result);
+    AuthOutcome::from_objc(result)
 }
 
 /// Check if microphone is authorized.
@@ -30,11 +55,12 @@ pub fn is_mic_authorized() -> bool {
     unsafe { mic_auth_status() == 3 }
 }
 
-/// Request microphone authorization. Blocks until user responds.
-pub fn request_mic_auth() -> bool {
+/// Request microphone authorization. See `request_speech_auth` for
+/// threading caveats.
+pub fn request_mic_auth() -> AuthOutcome {
     let result = unsafe { mic_request_auth() };
-    eprintln!("[VisionPipe] Mic auth request result: {}", result);
-    result == 1
+    log::info!("[VisionPipe] Mic auth request result: {}", result);
+    AuthOutcome::from_objc(result)
 }
 
 /// Transcribe a WAV file using the native SFSpeechRecognizer.

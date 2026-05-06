@@ -10,6 +10,11 @@ interface Props {
   onSkip: () => void;
 }
 
+const SETTINGS_PANE_URLS: Record<"microphone" | "speech_recognition", string> = {
+  microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+  speech_recognition: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
+};
+
 /**
  * First-time microphone onboarding. Shown the FIRST time the user
  * clicks the mic button in the Header (or any other mic-trigger surface).
@@ -21,23 +26,57 @@ interface Props {
  */
 export function MicOnboardingModal({ onComplete, onSkip }: Props) {
   const [state, setState] = useState<"idle" | "requesting" | "done">("idle");
+  const [errorBanner, setErrorBanner] = useState<{
+    pane: "microphone" | "speech_recognition";
+    message: string;
+  } | null>(null);
 
   const onGrant = async () => {
     setState("requesting");
+    setErrorBanner(null);
     let micGranted = false;
     let speechGranted = false;
+    let timedOut: "microphone" | "speech_recognition" | null = null;
+
     try {
       micGranted = await invoke<boolean>("request_microphone_access");
     } catch (err) {
-      console.warn("[VisionPipe] request_microphone_access failed:", err);
+      // Backend returns Err only on timeout (no response from macOS within
+      // 60 s). Treat as "we don't know" — surface the actionable message
+      // to the user instead of pretending it was denied.
+      console.warn("[VisionPipe] request_microphone_access timed out:", err);
+      timedOut = "microphone";
+      setErrorBanner({
+        pane: "microphone",
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
+
+    if (!timedOut) {
+      try {
+        speechGranted = await invoke<boolean>("request_speech_recognition");
+      } catch (err) {
+        console.warn("[VisionPipe] request_speech_recognition timed out:", err);
+        timedOut = "speech_recognition";
+        setErrorBanner({
+          pane: "speech_recognition",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    setState(timedOut ? "idle" : "done");
+    if (!timedOut) {
+      onComplete({ microphone: micGranted, speechRecognition: speechGranted });
+    }
+  };
+
+  const openSystemSettings = async (pane: "microphone" | "speech_recognition") => {
     try {
-      speechGranted = await invoke<boolean>("request_speech_recognition");
+      await invoke("open_settings_pane", { pane });
     } catch (err) {
-      console.warn("[VisionPipe] request_speech_recognition failed:", err);
+      console.warn("[VisionPipe] open_settings_pane failed:", err);
     }
-    setState("done");
-    onComplete({ microphone: micGranted, speechRecognition: speechGranted });
   };
 
   return (
@@ -64,9 +103,33 @@ export function MicOnboardingModal({ onComplete, onSkip }: Props) {
           <li><strong style={{ color: C.cream }}>Microphone</strong> — to record what you say</li>
           <li><strong style={{ color: C.cream }}>Speech Recognition</strong> — to transcribe it on-device via Apple's Speech framework</li>
         </ul>
-        <p style={{ margin: "0 0 20px 0", color: C.textMuted, fontSize: 12 }}>
+        <p style={{ margin: "0 0 16px 0", color: C.textMuted, fontSize: 12 }}>
           Click Grant access — macOS will show a prompt for each. Click Allow on both.
         </p>
+        {errorBanner && (
+          <div style={{
+            margin: "0 0 16px 0", padding: "10px 12px",
+            background: "#3a1a1a", border: `1px solid ${C.sienna}`,
+            borderRadius: 6, color: C.cream, fontSize: 12, lineHeight: 1.5,
+          }}>
+            <div style={{ marginBottom: 8, fontWeight: 600 }}>
+              macOS didn't answer the {errorBanner.pane === "microphone" ? "Microphone" : "Speech Recognition"} prompt.
+            </div>
+            <div style={{ marginBottom: 8, color: C.textMuted }}>
+              {errorBanner.message}
+            </div>
+            <button
+              onClick={() => openSystemSettings(errorBanner.pane)}
+              style={{
+                background: C.teal, color: C.cream, border: "none",
+                padding: "5px 10px", borderRadius: 4, fontSize: 11,
+                fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              Open System Settings →
+            </button>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button
             onClick={onSkip}
