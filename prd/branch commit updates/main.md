@@ -4,6 +4,22 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 14:40 PDT — diagnostic-bundle bugs (dialog ACL + hotkey re-register)
+
+### Summary of changes since last update
+User shared a `visionpipe-diagnostic-*.zip` from the in-app "Save diagnostic bundle" action. The log surfaced two real bugs invisible from outside: (1) every `window.confirm()` since v0.8.0 has been failing silently because the dialog plugin's `confirm` ACL wasn't on the capabilities list, (2) `register_global_shortcuts` was strict-fail — a single hotkey-registration error after a Settings pause/resume cycle left the app with NO global hotkeys until restart. Both fixed for v0.9.5.
+
+### Detail of changes made:
+- **`src-tauri/capabilities/default.json`**: added `dialog:allow-confirm`, `dialog:allow-message`, `dialog:allow-ask` next to the existing `dialog:allow-save`. Tauri 2 routes `window.confirm()` / `window.alert()` / `window.prompt()` through `plugin:dialog` — without these capabilities each call was failing with `Command plugin:dialog|confirm not allowed by ACL`. The Cancel button (Footer) and Delete Screenshot button were the visible casualties: clicking them did nothing because the confirm dialog couldn't open.
+- **`src-tauri/src/lib.rs register_global_shortcuts`**: refactored from strict-fail (first `on_shortcut` error aborts everything) to best-effort per shortcut. Each of the three registrations (Cmd+Shift+O onboarding, configurable capture combo, Cmd+Shift+S scrolling) is now wrapped in `if let Err(e) = ... { log::warn!(...); }` so a failure on one doesn't kill the others. Also added a defensive `unregister_all()` at the top to guard against ghost OS-level state from a partial pause.
+
+### Potential concerns to address:
+- If a user's Cmd+Shift+O is permanently claimed by another app, the welcome-card shortcut is dead — tray-menu "Show Onboarding…" is the workaround. Could surface in-app if it becomes a frequent issue.
+- We don't retry after a failed register. The diagnostic-log failure looked transient (next time the user pressed Cmd+Shift+C it worked again after restart); adding a backoff retry would catch that class.
+- The dialog capability additions are global (whole window). If a future capability scope lets us narrow per-pane, worth doing — for now, "all dialogs allowed" is fine.
+
+---
+
 ## Progress Update as of 2026-05-06 14:36 PDT — v0.9.4
 *(Most recent updates at top)*
 

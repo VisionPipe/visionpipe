@@ -57,83 +57,109 @@ fn save_balance(app: &AppHandle, balance: u64) -> Result<(), String> {
 ///
 /// Called from `setup()` on launch and from `resume_global_shortcuts`
 /// after a Settings-panel rebind.
+///
+/// Each registration is best-effort: if a particular hotkey is already
+/// claimed by another app (or wasn't fully released by a prior
+/// unregister_all), we log + continue so the OTHER shortcuts still get
+/// registered. Pre-v0.9.5 a single failure aborted the whole function,
+/// leaving the app with NO global hotkeys until restart — surfaced in
+/// the user's diagnostic logs as the "RegisterEventHotKey failed for
+/// KeyO" warning that broke Cmd+Shift+C until they relaunched.
 fn register_global_shortcuts(app: &AppHandle) -> Result<(), String> {
+    // Defensive: clear any lingering registrations before re-registering.
+    // setup() calls this on a fresh app where unregister_all is a no-op;
+    // resume_global_shortcuts calls it after pause_global_shortcuts already
+    // unregistered, but a second unregister_all is harmless and protects
+    // against a partial pause leaving ghost OS-level state.
+    let _ = app.global_shortcut().unregister_all();
+
     // Cmd+Shift+O — re-open the onboarding window (debug/manual access).
     let onboarding_handle = app.clone();
-    app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+O", move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            log::info!("[VisionPipe] Show-onboarding shortcut triggered");
-            if let Some(window) = onboarding_handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.emit("show-onboarding", ());
+    if let Err(e) = app.global_shortcut().on_shortcut(
+        "CmdOrCtrl+Shift+O",
+        move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                log::info!("[VisionPipe] Show-onboarding shortcut triggered");
+                if let Some(window) = onboarding_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let _ = window.emit("show-onboarding", ());
+                }
             }
-        }
-    }).map_err(|e| e.to_string())?;
+        },
+    ) {
+        log::warn!("[VisionPipe] Failed to register Cmd+Shift+O onboarding shortcut: {}", e);
+    }
 
     // Configurable global capture shortcut (default Cmd+Shift+C).
     let cfg = hotkey_config::load();
     let global_combo = cfg.take_next_screenshot.clone();
     let app_handle = app.clone();
-    app.global_shortcut().on_shortcut(global_combo.as_str(), move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            log::info!("[VisionPipe] Capture shortcut triggered");
-            // CRITICAL: capture metadata BEFORE we show + focus the
-            // window. Once VP has focus, `metadata::collect_metadata()`
-            // would report VP itself as the active app — yielding the
-            // "App: visionpipe" garbage in the markdown output.
-            stash_current_metadata(&app_handle);
-            if let Some(window) = app_handle.get_webview_window("main") {
-                if let Ok(Some(monitor)) = window.current_monitor() {
-                    let size = monitor.size();
-                    let pos = monitor.position();
-                    let _ = window.set_position(tauri::Position::Physical(
-                        tauri::PhysicalPosition::new(pos.x, pos.y),
-                    ));
-                    let _ = window.set_size(tauri::Size::Physical(
-                        tauri::PhysicalSize::new(size.width, size.height),
-                    ));
+    if let Err(e) = app.global_shortcut().on_shortcut(
+        global_combo.as_str(),
+        move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                log::info!("[VisionPipe] Capture shortcut triggered");
+                stash_current_metadata(&app_handle);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Ok(Some(monitor)) = window.current_monitor() {
+                        let size = monitor.size();
+                        let pos = monitor.position();
+                        let _ = window.set_position(tauri::Position::Physical(
+                            tauri::PhysicalPosition::new(pos.x, pos.y),
+                        ));
+                        let _ = window.set_size(tauri::Size::Physical(
+                            tauri::PhysicalSize::new(size.width, size.height),
+                        ));
+                    }
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let _ = window.set_always_on_top(true);
+                    let handle = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        let _ = handle.emit("start-capture", "ready");
+                    });
                 }
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.set_always_on_top(true);
-                let handle = window.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    let _ = handle.emit("start-capture", "ready");
-                });
             }
-        }
-    }).map_err(|e| e.to_string())?;
+        },
+    ) {
+        log::warn!("[VisionPipe] Failed to register capture shortcut '{}': {}", global_combo, e);
+    }
 
     // Cmd+Shift+S — scrolling capture.
     let scroll_handle = app.clone();
-    app.global_shortcut().on_shortcut("CmdOrCtrl+Shift+S", move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            log::info!("[VisionPipe] Scroll-capture shortcut triggered");
-            stash_current_metadata(&scroll_handle);
-            if let Some(window) = scroll_handle.get_webview_window("main") {
-                if let Ok(Some(monitor)) = window.current_monitor() {
-                    let size = monitor.size();
-                    let pos = monitor.position();
-                    let _ = window.set_position(tauri::Position::Physical(
-                        tauri::PhysicalPosition::new(pos.x, pos.y),
-                    ));
-                    let _ = window.set_size(tauri::Size::Physical(
-                        tauri::PhysicalSize::new(size.width, size.height),
-                    ));
+    if let Err(e) = app.global_shortcut().on_shortcut(
+        "CmdOrCtrl+Shift+S",
+        move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                log::info!("[VisionPipe] Scroll-capture shortcut triggered");
+                stash_current_metadata(&scroll_handle);
+                if let Some(window) = scroll_handle.get_webview_window("main") {
+                    if let Ok(Some(monitor)) = window.current_monitor() {
+                        let size = monitor.size();
+                        let pos = monitor.position();
+                        let _ = window.set_position(tauri::Position::Physical(
+                            tauri::PhysicalPosition::new(pos.x, pos.y),
+                        ));
+                        let _ = window.set_size(tauri::Size::Physical(
+                            tauri::PhysicalSize::new(size.width, size.height),
+                        ));
+                    }
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let _ = window.set_always_on_top(true);
+                    let handle = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        let _ = handle.emit("start-scroll-capture", "ready");
+                    });
                 }
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.set_always_on_top(true);
-                let handle = window.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    let _ = handle.emit("start-scroll-capture", "ready");
-                });
             }
-        }
-    }).map_err(|e| e.to_string())?;
+        },
+    ) {
+        log::warn!("[VisionPipe] Failed to register Cmd+Shift+S scrolling-capture shortcut: {}", e);
+    }
 
     Ok(())
 }
