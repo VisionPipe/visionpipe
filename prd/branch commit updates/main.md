@@ -4,6 +4,31 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 14:36 PDT — v0.9.4
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.9.4 — capture is ~10× faster (no more 20-second stall after taking a screenshot), plus the "Drag a region" pill is now bright amber so it actually catches the eye against busy desktops.
+
+### Detail of changes made:
+
+- **Capture flow no longer round-trips PNG bytes through JSON IPC.** The pre-v0.9.4 path was: Rust captures → reads bytes → base64 → returns 11MB string → JS atob() → Uint8Array → `Array.from(uint8array)` (~32MB JSON array of decimal numbers) → IPC back to Rust → Rust JSON-deserialises → writes to disk. For a Retina region capture (~5-15 MB) that round-trip cost ~10-20 seconds end-to-end. Now `take_screenshot` / `take_scrolling_screenshot` / `capture_fullscreen` all return the temp PNG path directly, and a new `move_capture_to_session` Tauri command renames the file from `/tmp` into the session folder under its canonical name. Bytes never cross the IPC boundary. Should bring post-capture stall from 20 s → ~1 s.
+
+- **`SelectionOverlay` "Drag a region" pill: amber + drop shadow + heavier weight.** Was previously dark-green-on-busy-desktops, easy to miss. Now `rgba(212, 136, 42, 0.95)` (amber) with a `0 4px 14px rgba(0,0,0,0.4)` shadow and `font-weight: 700` so the affordance is unambiguous. Scrolling-capture mode already used amber; the regular mode now matches.
+
+### Potential concerns to address:
+
+- **Cross-volume rename fallback**: `move_capture_to_session` first tries `std::fs::rename` (intra-volume, atomic, near-instant); if that fails (rare — only happens when `/tmp` is on a different filesystem than `~/Pictures`), falls back to `copy + delete`. Slightly slower but still much faster than the old IPC round-trip.
+
+- **`/tmp` cleanup**: each capture writes `/tmp/visionpipe-capture-<nanos>.png`. The successful path moves the file out of `/tmp` immediately. If JS crashes between the capture finishing and the move call, an orphan PNG could linger. macOS clears `/tmp` on reboot anyway; flagging for visibility.
+
+- **Two smaller `Array.from(bytes)` paths NOT changed**: `state/persistence.ts` writes `transcript.json` (~10-50 KB) and the SessionWindow fallback writes the markdown body (~1-50 KB). Both are small enough that the IPC overhead is invisible. Refactoring them isn't urgent.
+
+---
+
+
 ## Progress Update as of 2026-05-06 14:35 PDT — v0.9.4 prep (capture speed + pill + chip text)
 
 ### Summary of changes since last update
