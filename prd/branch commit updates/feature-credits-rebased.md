@@ -4,6 +4,28 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-06 09:35 PDT — v0.6.1 (UI tweaks: hotkey pill + tighter HistoryHub)
+
+### Summary of changes since last update
+Two HistoryHub UX improvements: (1) the keyboard shortcut is now a single orange clickable pill that opens the SettingsPanel for rebinding; (2) the window's height range was reduced from 640-900 px to 420-720 px to remove the wall of empty deep-forest background below short session lists.
+
+### Detail of changes made:
+- **`src/components/HotkeyPill.tsx`** (new): Self-contained component that loads the take-next-screenshot hotkey via `load_hotkey_config`, renders it as a single orange pill (using existing `C.amber` token, font-mono, bold, 999-radius). Click opens `SettingsPanel` (component manages its own modal state, refreshes the displayed combo on close so a just-rebound shortcut is reflected immediately). Includes a `formatHotkey()` helper that converts stored strings like `CmdOrCtrl+Shift+C` to display glyphs `⌘⇧C` (handles Cmd/Shift/Alt/Ctrl/Enter/Tab/Escape/Space/Backspace plus uppercase letter conversion). Optional `binding`, `label`, `size` props for future reuse on other shortcuts.
+- **`src/components/__tests__/HotkeyPill.test.ts`** (new): 7 tests for `formatHotkey` covering the marquee shortcuts, Alt+Tab, lowercase-letter normalization, F-keys, and the special keys (Space/Backspace/Escape).
+- **`src/components/HistoryHub.tsx`**: Replaced the static `or press ⌘⇧C from anywhere` text with `<HotkeyPill />` rendered inline. Same in the empty-state message: `Hit ⌘⇧C` is now `Hit <HotkeyPill />`. Both spots use flexbox so the pill aligns with the surrounding text. Now any user who can't remember the shortcut sees an obvious clickable affordance to change it.
+- **`src/App.tsx` (`resizeForHistoryHub`)**: Window height range tightened from `max(640*scale, min(900*scale, monitorH*0.75))` to `max(420*scale, min(720*scale, monitorH*0.55))` — about 200-220 px less empty space on a 1080p monitor. Existing comment expanded to explain *why* the old range looked empty (rows are 80-120 px each, with 0-3 sessions a 800+ px window had ~500 px of dead deep-forest background). Power users with many sessions still get a scrollable list at 720 px; the empty/idle state no longer overwhelms.
+
+### Verified:
+- `tsc --noEmit`: exit 0.
+- `vitest run` (full): 7 files, 46 tests, all pass (added the 7 new HotkeyPill tests since last commit).
+
+### Potential concerns to address:
+- **HotkeyPill is currently used only in HistoryHub.** The empty state in onboarding/idle could also benefit, but those don't display a hotkey today. SessionWindow's Header could optionally show the Copy & Send hotkey as a pill — flagged for follow-up if the user wants more discoverability.
+- **The window resize is fixed-range, not content-aware.** A truly minimal-empty-space approach would be: measure the rendered list height from the React side and ask Tauri to set the window to that exact size. Significant complexity for marginal win — punted.
+- **Keyboard shortcut display is Mac-only.** VisionPipe is Mac-only (cpal+Whisper+macOS-private-api) so this is fine, but if the app ever supports Windows/Linux the glyph table needs platform branching.
+
+---
+
 ## Progress Update as of 2026-05-06 09:25 PDT — v0.6.1 (descriptive markdown filename)
 
 ### Summary of changes since last update

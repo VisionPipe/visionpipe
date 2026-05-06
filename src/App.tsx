@@ -126,8 +126,16 @@ function AppInner() {
         const scale = monitor.scaleFactor ?? 1;
         const monitorW = monitor.size.width;
         const monitorH = monitor.size.height;
+        // Width: same as before — wide enough for thumbnail rows + actions.
         const targetW = Math.max(Math.round(900 * scale), Math.min(Math.round(1400 * scale), Math.round(monitorW * 0.55)));
-        const targetH = Math.max(Math.round(640 * scale), Math.min(Math.round(900 * scale), Math.round(monitorH * 0.75)));
+        // Height: shrunken from prior 640-900 px range. The HistoryHub
+        // typically shows a list whose natural height is ~80-120 px per
+        // row plus ~140 px of chrome (top-bar + new-bundle button + a
+        // small tip footer); with 0-3 sessions, the old 800+ px window
+        // had a wall of empty deep-forest background below the list.
+        // 420-720 keeps power users with many sessions happy (the list
+        // still scrolls) but doesn't overwhelm the empty/idle state.
+        const targetH = Math.max(Math.round(420 * scale), Math.min(Math.round(720 * scale), Math.round(monitorH * 0.55)));
         const targetX = monitor.position.x + Math.round((monitorW - targetW) / 2);
         const targetY = monitor.position.y + Math.round((monitorH - targetH) / 2);
         await win.setSize(new PhysicalSize(targetW, targetH));

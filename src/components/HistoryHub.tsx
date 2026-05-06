@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { Camera, Folder, Clipboard, ChevronRight, ChevronDown } from "lucide-react";
 import { C, FONT_BODY } from "../lib/ui-tokens";
+import { HotkeyPill } from "./HotkeyPill";
 
 /**
  * Summary returned by the Rust `list_recent_sessions_cmd` Tauri command.
@@ -160,16 +161,20 @@ export function HistoryHub() {
           <Camera size={18} />
           New Screenshot Bundle
         </button>
-        <div style={{ marginTop: 8, fontSize: 11, color: C.textDim }}>
-          or press ⌘⇧C from anywhere
+        <div style={{ marginTop: 8, fontSize: 11, color: C.textDim, display: "flex", alignItems: "center", gap: 6 }}>
+          <span>or press</span>
+          <HotkeyPill />
+          <span>from anywhere</span>
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         {sessions === null && <div style={{ color: C.textMuted, fontSize: 13 }}>Loading…</div>}
         {sessions !== null && sessions.length === 0 && (
-          <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 40 }}>
-            No screenshot bundles yet. Hit ⌘⇧C or click the button above to create your first one.
+          <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 40, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
+            <span>No screenshot bundles yet. Hit</span>
+            <HotkeyPill />
+            <span>or click the button above to create your first one.</span>
           </div>
         )}
         {sessions?.map(s => {
