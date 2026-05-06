@@ -3,7 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface Props {
-  onCapture: (pngBytes: Uint8Array) => void;
+  /**
+   * Called with the absolute temp-file path of the captured PNG.
+   * The caller is responsible for moving it into the session folder
+   * via `move_capture_to_session`. We pass a path (not bytes) because
+   * Tauri's IPC bridge is JSON-only — round-tripping multi-MB binary
+   * data through it cost ~10-20 s per capture before v0.9.4.
+   */
+  onCapture: (capturePath: string) => void;
   onCancel: () => void;
   /** "region" = single-frame capture (default). "scrolling" = capture
    *  the same region across multiple Page Down scrolls and stitch
@@ -36,28 +43,24 @@ export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }
     await win.hide();
     await new Promise(r => setTimeout(r, 300));
 
-    let dataUri: string;
+    let capturePath: string;
     if (captureMode === "scrolling") {
-      dataUri = await invoke<string>("take_scrolling_screenshot", {
+      capturePath = await invoke<string>("take_scrolling_screenshot", {
         x: screenX, y: screenY,
         width: Math.round(w), height: Math.round(h),
         numScrolls: 5,
       });
     } else {
-      dataUri = await invoke<string>("take_screenshot", {
+      capturePath = await invoke<string>("take_screenshot", {
         x: screenX, y: screenY, width: Math.round(w), height: Math.round(h),
       });
     }
-    const base64 = dataUri.split(",")[1];
-    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    onCapture(bytes);
+    onCapture(capturePath);
   }, [onCapture, captureMode]);
 
   const captureFullscreen = useCallback(async () => {
-    const dataUri = await invoke<string>("capture_fullscreen");
-    const base64 = dataUri.split(",")[1];
-    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    onCapture(bytes);
+    const capturePath = await invoke<string>("capture_fullscreen");
+    onCapture(capturePath);
   }, [onCapture]);
 
   useEffect(() => {
@@ -150,10 +153,14 @@ export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }
       )}
       <div style={{
         position: "absolute", top: 24, left: "50%", transform: "translateX(-50%)",
-        background: captureMode === "scrolling" ? "rgba(212, 136, 42, 0.92)" : "rgba(20, 30, 24, 0.85)",
-        color: captureMode === "scrolling" ? "#1a2a20" : "#cfd8d2",
-        padding: "8px 20px", borderRadius: 999, fontSize: 14, fontFamily: "Verdana",
-        fontWeight: captureMode === "scrolling" ? 700 : 400,
+        // Amber pill for both modes — high-contrast against any desktop
+        // background so the user instantly sees what to do. Was previously
+        // dark-green for the regular mode, which faded into busy desktops.
+        background: "rgba(212, 136, 42, 0.95)",
+        color: "#1a2a20",
+        padding: "10px 22px", borderRadius: 999, fontSize: 14, fontFamily: "Verdana",
+        fontWeight: 700,
+        boxShadow: "0 4px 14px rgba(0,0,0,0.4)",
         pointerEvents: "none",
       }}>
         {captureMode === "scrolling"

@@ -4,6 +4,23 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 14:35 PDT — v0.9.4 prep (capture speed + pill + chip text)
+
+### Summary of changes since last update
+Three fixes destined for v0.9.4: (1) capture flow no longer round-trips PNG bytes through JSON IPC — should eliminate the 20-second post-capture stall reported by the user; (2) "Drag a region" pill is now bright amber with a drop shadow so it catches the eye against busy desktops; (3) credit chip in the Header now reads "Cost: 1 credit · Balance: 1,000 credits" with proper singular/plural and thousands separator (was "1 cr · 1000 cr").
+
+### Detail of changes made:
+- **Capture-speed fix**: pre-v0.9.4, `take_screenshot` returned a base64 data URI (~11 MB string for a 8 MB Retina PNG), JS decoded it via atob + Uint8Array.from + Array.from, then sent the resulting 8 M-element JSON array of numbers BACK to Rust as `write_session_file`'s bytes parameter. Each leg was multi-second on Retina captures. New flow: Rust capture commands write to `/tmp/visionpipe-capture-<nanos>.png` and return the path. JS calls a new `move_capture_to_session` Tauri command which `std::fs::rename`s (or `copy + delete` if cross-volume) the file into the session folder. Bytes never cross IPC.
+- **Touched**: `src-tauri/src/capture.rs` (return path instead of base64; new `fresh_temp_path` helper); `src-tauri/src/lib.rs` (new `move_capture_to_session` command + registration); `src/components/SelectionOverlay.tsx` (drop the atob/Uint8Array.from chain, just pass the path); `src/App.tsx onCapture` (signature now takes path string; uses `move_capture_to_session` instead of `write_session_file` with bytes).
+- **Pill style**: `src/components/SelectionOverlay.tsx` — both modes now use `rgba(212, 136, 42, 0.95)` (amber) with `0 4px 14px rgba(0,0,0,0.4)` drop shadow and `font-weight: 700`. Scrolling mode already used amber; regular mode caught up.
+- **Credit chip text**: `src/components/Header.tsx` — `{N} cr` → `{N.toLocaleString()} {N === 1 ? 'credit' : 'credits'}`. Renders "Cost: 1 credit · Balance: 1,000 credits" instead of "Cost: 1 cr · Balance: 1000 cr".
+
+### Potential concerns to address:
+- The cross-volume rename fallback (copy + delete) only triggers if `/tmp` and the session folder are on different filesystems — rare on a default macOS install.
+- Two smaller `Array.from(bytes)` paths still exist (`persistence.ts` writes ~10-50 KB transcript.json; `SessionWindow.tsx` fallback writes ~1-50 KB markdown). Both are small enough that the IPC overhead is invisible. Not refactored.
+
+---
+
 ## Progress Update as of 2026-05-06 14:17 PDT — v0.9.3
 *(Most recent updates at top)*
 

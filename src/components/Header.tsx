@@ -121,9 +121,9 @@ function CreditChip() {
           : `Bundle: ${currentBundleCost.screenshots} screenshot${currentBundleCost.screenshots === 1 ? "" : "s"} + ${currentBundleCost.audio} audio = ${currentBundleCost.total}. Balance: ${balance}.`
       }
     >
-      <span>Cost: {currentBundleCost.total} cr</span>
+      <span>Cost: {currentBundleCost.total.toLocaleString()} {currentBundleCost.total === 1 ? "credit" : "credits"}</span>
       <span style={{ opacity: 0.6 }}>·</span>
-      <span>Balance: {balance} cr</span>
+      <span>Balance: {balance.toLocaleString()} {balance === 1 ? "credit" : "credits"}</span>
     </div>
   );
 }

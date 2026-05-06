@@ -1,53 +1,72 @@
-use base64::Engine;
 use image::{ImageBuffer, Rgba};
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
-/// Read a PNG file from disk and return as a base64 data URI.
-fn png_file_to_data_uri(path: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let png_bytes = std::fs::read(path)?;
-    eprintln!("[VisionPipe] Captured PNG: {} bytes ({:.1} MB)", png_bytes.len(), png_bytes.len() as f64 / 1_048_576.0);
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
-    Ok(format!("data:image/png;base64,{}", b64))
+/// Generate a unique temp path for a capture. Each invocation gets its
+/// own filename so concurrent captures (unlikely, but possible if a
+/// scrolling capture is mid-flight when another hotkey fires) don't
+/// stomp each other.
+fn fresh_temp_path() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("/tmp/visionpipe-capture-{}.png", nanos)
 }
 
 /// Capture the entire primary screen using macOS `screencapture`.
-/// Returns a full Retina-resolution PNG as a base64 data URI.
+/// Returns the absolute path to the captured PNG on disk.
+///
+/// IMPORTANT: this used to base64-encode the PNG and return it as a data
+/// URI — a 5-15 MB capture became a 20+ MB string that then crossed the
+/// IPC bridge AGAIN as `Array.from(bytes)` (a JSON-serialised array of
+/// numbers, ~4× the byte size as text) when the JS side wrote the file.
+/// On a Retina capture this could take 20+ seconds. The new flow keeps
+/// the bytes on disk — JS only ever sees a path string.
 pub fn capture_fullscreen() -> Result<String, Box<dyn std::error::Error>> {
-    let tmp = "/tmp/visionpipe-capture.png";
+    let path = fresh_temp_path();
 
     let status = Command::new("screencapture")
-        .args(["-x", "-r", tmp]) // -x suppresses sound, -r captures at native (Retina) resolution
+        .args(["-x", "-r", &path]) // -x suppresses sound, -r captures at native (Retina) resolution
         .status()?;
 
     if !status.success() {
         return Err("screencapture failed".into());
     }
 
-    let result = png_file_to_data_uri(tmp);
-    let _ = std::fs::remove_file(tmp);
-    result
+    log_capture_size(&path);
+    Ok(path)
 }
 
 /// Capture a specific region of the screen using macOS `screencapture -R`.
 /// Coordinates are in macOS point (logical) units.
-/// Returns a full Retina-resolution PNG as a base64 data URI.
+/// Returns the absolute path to the captured PNG on disk.
 pub fn capture_region(x: u32, y: u32, width: u32, height: u32) -> Result<String, Box<dyn std::error::Error>> {
-    let tmp = "/tmp/visionpipe-capture.png";
+    let path = fresh_temp_path();
     let rect = format!("{},{},{},{}", x, y, width, height);
 
     let status = Command::new("screencapture")
-        .args(["-R", &rect, "-x", "-r", tmp]) // -r captures at native (Retina) resolution
+        .args(["-R", &rect, "-x", "-r", &path])
         .status()?;
 
     if !status.success() {
         return Err("screencapture failed".into());
     }
 
-    let result = png_file_to_data_uri(tmp);
-    let _ = std::fs::remove_file(tmp);
-    result
+    log_capture_size(&path);
+    Ok(path)
+}
+
+fn log_capture_size(path: &str) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        log::info!(
+            "[VisionPipe] Captured PNG: {} bytes ({:.1} MB) at {}",
+            meta.len(),
+            meta.len() as f64 / 1_048_576.0,
+            path,
+        );
+    }
 }
 
 /// Capture a scrolling screenshot of the same region across multiple
@@ -129,13 +148,12 @@ pub fn capture_scrolling_region(
         y_off += img.height();
     }
 
-    let stitched_path = "/tmp/visionpipe-scroll-stitched.png";
-    canvas.save(stitched_path)?;
+    let stitched_path = fresh_temp_path();
+    canvas.save(&stitched_path)?;
 
-    let result = png_file_to_data_uri(stitched_path);
-    let _ = std::fs::remove_file(stitched_path);
+    log_capture_size(&stitched_path);
     for p in &frame_paths {
         let _ = std::fs::remove_file(p);
     }
-    result
+    Ok(stitched_path)
 }

@@ -483,10 +483,42 @@ fn refresh_tray_menu(app: &AppHandle) {
     }
 }
 
+/// Capture a region of the screen and return the temp file path on disk.
+/// Caller (typically App.tsx onCapture) is responsible for moving the
+/// file into the session folder via `move_capture_to_session`.
+///
+/// Pre-v0.9.4 returned a base64 data URI of the PNG, which the JS side
+/// then re-serialized as `Array.from(bytes)` to write to disk. For a
+/// Retina capture (5-15 MB) that round-trip cost ~10-20 seconds. Now
+/// the bytes never cross the IPC bridge.
 #[tauri::command]
 async fn take_screenshot(x: u32, y: u32, width: u32, height: u32) -> Result<String, String> {
     capture::capture_region(x, y, width, height)
         .map_err(|e| e.to_string())
+}
+
+/// Move a captured PNG from /tmp into the session folder under the
+/// final canonical filename. Used by App.tsx after a screenshot lands
+/// — the rename is intra-volume so it's near-instant. If the rename
+/// crosses volumes (rare but possible), falls back to copy + delete.
+#[tauri::command]
+async fn move_capture_to_session(
+    src_path: String,
+    folder: String,
+    filename: String,
+) -> Result<String, String> {
+    let src = std::path::PathBuf::from(&src_path);
+    let dest = std::path::PathBuf::from(&folder).join(&filename);
+    // Try a fast in-volume rename first.
+    if let Err(rename_err) = std::fs::rename(&src, &dest) {
+        // Fallback: copy + delete (handles cross-volume situations,
+        // e.g., /tmp on a different filesystem from ~/Pictures/...).
+        std::fs::copy(&src, &dest).map_err(|e| {
+            format!("rename failed ({}); copy fallback also failed: {}", rename_err, e)
+        })?;
+        let _ = std::fs::remove_file(&src);
+    }
+    Ok(dest.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -1145,6 +1177,7 @@ pub fn run() {
             take_screenshot,
             take_scrolling_screenshot,
             capture_fullscreen,
+            move_capture_to_session,
             get_metadata,
             prepare_in_app_capture,
             save_and_copy_image,

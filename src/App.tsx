@@ -458,7 +458,7 @@ function AppInner() {
     // Don't persist; user can click the mic button again later to retry.
   }, []);
 
-  const onCapture = useCallback(async (pngBytes: Uint8Array) => {
+  const onCapture = useCallback(async (capturePath: string) => {
     const metadata = await invoke<CaptureMetadata>("get_metadata");
     // Local-time YYYY-MM-DD_HH-MM-SS (matches the canonical-name spec).
     // Previously used ISO with `T` separator which produced names like
@@ -513,8 +513,15 @@ function AppInner() {
       activeUrl: metadata.activeUrl, windowTitle: metadata.window,
     });
 
-    await invoke("write_session_file", {
-      folder: folder!, filename: `${canonicalName}.png`, bytes: Array.from(pngBytes),
+    // Move the captured PNG from /tmp into the session folder under its
+    // canonical name. This replaces the old bytes-over-IPC path
+    // (Array.from(uint8array) + JSON serialise + 4× size blowup) which
+    // was responsible for the 10-20 s post-capture stall on Retina
+    // captures. The intra-volume rename is near-instant.
+    await invoke("move_capture_to_session", {
+      srcPath: capturePath,
+      folder: folder!,
+      filename: `${canonicalName}.png`,
     });
 
     const screenshot: Screenshot = {
