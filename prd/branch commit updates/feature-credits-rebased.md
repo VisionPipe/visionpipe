@@ -4,6 +4,25 @@ This document tracks progress on the `feature/credits-rebased` branch of VisionP
 
 ---
 
+## Progress Update as of 2026-05-06 09:45 PDT — v0.6.1 (correction: hotkey pill + tighter window in Onboarding too)
+
+### Summary of changes since last update
+The user shared a screenshot showing the Welcome / Onboarding view (NOT HistoryHub) was the place where they wanted (a) the three keyboard keys collapsed into one orange pill and (b) the empty green space removed. The previous commit applied both fixes to HistoryHub instead. This commit applies them to Onboarding too.
+
+### Detail of changes made:
+- **`src/components/Onboarding.tsx`**: Removed the local `KbdKey` helper (rendered `⌘`, `⇧`, `C` as three separate boxed keys with orange borders and 22 px font). Replaced the `<KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>C</KbdKey>` triplet with a single `<HotkeyPill size="lg" />` import. Added a small "Click the orange pill to change the shortcut." hint underneath. Layout switched from `<ul><li>` to a flexbox row so the pill aligns inline with the surrounding text. The new `size="lg"` prop on HotkeyPill (already present in the component) makes it visually prominent enough to read as the welcome card's CTA.
+- **`src/App.tsx` (`showOnboardingWindow`)**: Now accepts a `compact: boolean` flag. When true, sets the onboarding window to 620×360 instead of 620×680 — the all-granted state's content is ~340 px tall, so the previous fixed 680 px left ~340 px of empty deep-forest background below the Get Started button (visible in the user's screenshot).
+- **`src/App.tsx` (new effect)**: Watches the `allRequiredGranted` boolean and calls `showOnboardingWindow(allRequiredGranted)` whenever it changes while in onboarding mode. The dep array uses the boolean, not the permissions object, so the 2-second permission-poll interval doesn't trigger re-resizes when nothing actually changed.
+
+### Verified:
+- `tsc --noEmit`: exit 0.
+- `vitest run` (full): 7 files, 46 tests, all pass.
+
+### Known limitation:
+- Onboarding's title bar still shows `Vision|Pipe` plus version badge plus the "Welcome to Vision|Pipe" header — slight redundancy, but matches the existing pattern. Not changed.
+
+---
+
 ## Progress Update as of 2026-05-06 09:35 PDT — v0.6.1 (UI tweaks: hotkey pill + tighter HistoryHub)
 
 ### Summary of changes since last update

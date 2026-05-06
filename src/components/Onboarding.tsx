@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
 import type { PermissionStatus } from "../lib/permissions-types";
 import { VersionBadge } from "./VersionBadge";
+import { HotkeyPill } from "./HotkeyPill";
 
 type SettingsPane =
   | "screen_recording"
@@ -114,11 +115,20 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
               <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 12, marginTop: 8 }}>
                 How to give your LLM eyes:
               </div>
-              <ul style={{ margin: 0, paddingLeft: 24, color: C.cream, fontSize: 16, lineHeight: 2.2 }}>
-                <li>Press <KbdKey>⌘</KbdKey><KbdKey>⇧</KbdKey><KbdKey>C</KbdKey> to capture your screen</li>
-              </ul>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 12,
+                color: C.cream, fontSize: 16, lineHeight: 1.6,
+                margin: "0 0 4px 0",
+              }}>
+                <span>Press</span>
+                <HotkeyPill size="lg" />
+                <span>to capture your screen</span>
+              </div>
+              <p style={{ marginTop: 6, color: C.textDim, fontSize: 11 }}>
+                Click the orange pill to change the shortcut.
+              </p>
 
-              <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+              <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
                 <button
                   onClick={onDismiss}
                   style={{
@@ -135,27 +145,6 @@ export function Onboarding({ permissions, onRecheck, onDismiss }: OnboardingProp
         </div>
       </div>
     </div>
-  );
-}
-
-// ── Inline keyboard-key badge — sized large so the shortcut to capture
-//    (⌘⇧C) is unmistakable as the call-to-action on the welcome card.
-//    Wider horizontal padding keeps the visual roughly square; height
-//    is preserved (the user wanted them squarer, not shorter). ──
-function KbdKey({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd style={{
-      display: "inline-block",
-      padding: "8px 22px", margin: "0 4px",
-      fontFamily: FONT_MONO, fontSize: 22, fontWeight: 700,
-      color: C.cream, background: C.deepForest,
-      border: `2px solid ${C.amber}`, borderRadius: 8,
-      verticalAlign: "middle",
-      minWidth: 32, textAlign: "center",
-      boxShadow: "0 2px 0 rgba(0,0,0,0.3)",
-    }}>
-      {children}
-    </kbd>
   );
 }
 
