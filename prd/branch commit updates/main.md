@@ -4,6 +4,47 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 17:09 PDT — v0.10.0
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.10.0 — audio recording redesigned to be **fully on-demand per screenshot**, not session-wide. The app no longer records continuously when it's open; each screenshot has its own Record / Pause / Resume controls under its Narration label. The Header mic button + the "Recording · Local-only" status pill are gone. The pop-up Re-record modal is gone. HistoryHub header gets the bold + orange-pipe brand and a version badge top-right.
+
+### Detail of changes made:
+
+#### Audio recording redesign (the big one)
+
+- **No more session-wide / auto-recording.** The Header mic button is removed. App.tsx no longer auto-starts a cpal recording on first capture or auto-stops + transcribes on each subsequent capture boundary. Sessions are silent by default until the user explicitly clicks Record on a screenshot.
+
+- **Per-screenshot RecordingControls component** (`src/components/RecordingControls.tsx`) lives between each card's "Narration" label and the transcript textarea. State machine: idle → `[🎙 Record audio]`; recording → `[🔴 0:14 Recording] [Pause]`; paused → `[🔴 0:14 Paused] [Resume]`. Click the red-dot pill in either active state to stop, transcribe, and APPEND the transcript to the screenshot's existing transcriptSegment (Q2=B from the 2026-05-06 design call). Click Pause to stop the chunk and park its transcribed text in an internal accumulator; Resume kicks off a fresh start_recording (Q1=B "stop-and-restart" pause — simpler than a true streaming pause, with virtually identical UX).
+
+- **`src/state/recording-context.tsx`** owns the state machine. cpal is a singleton — only one active recording at a time. The context tracks `activeSeq` (which screenshot's controls show the recording state), `mode`, and `elapsedSec`. Clicking Record on a different card while one is already active auto-stops + finalises the first one before starting the new one. A `busyRef` guards against double-click double-fire.
+
+- **Mic onboarding modal** (Mic + Speech Recognition explainer) is now triggered by the FIRST Record click on any card, gated by `localStorage.vp-mic-onboarded`. Previously the trigger lived on the now-deleted Header mic button. After grant, user clicks Record again to actually begin (no auto-start — matches the manual model).
+
+- **Deleted files:** `src/components/ReRecordModal.tsx` (popup re-record flow superseded), `src/state/mic-context.tsx` (master-recorder lifecycle no longer needed). Header's `NetworkState` type export is removed.
+
+- **`src/App.tsx`** is meaningfully smaller — dropped `initSessionAudio`, `stopAndTranscribeCurrentSegment`, `onToggleMic`, `clearRecorder`, `closeDeepgram`, the `MicProvider` wrap, the `vp-rerecord-segment` hotkey dispatch, and the master-recorder beforeunload drain. Replaced beforeunload drain with a best-effort `invoke("stop_recording")` so a stray cpal stream doesn't outlive the app.
+
+- **Touched callers** that were passing `onRequestRerecord`: `InterleavedView.tsx`, `SplitView.tsx` — prop dropped. `SessionWindow.tsx` no longer manages `rerecordSeq` state, no longer imports `useMic` / `ReRecordModal`. `Header.tsx` Props simplified (no mic props).
+
+#### HistoryHub header polish
+
+- **`src/components/HistoryHub.tsx`** title bar: `Vision|Pipe — History` reformatted with bold + orange `|` (`Vision<span style={{ color: amber }}>|</span>Pipe`) on the left, and a `<VersionBadge />` in the top-right corner — matches the Onboarding card's chrome layout.
+
+### Potential concerns to address:
+
+- The cpal start/stop boundary at every Pause/Resume can produce a tiny transcription glitch (e.g., SFSpeechRecognizer might re-capitalise the first word of chunk 2). Acceptable trade-off vs. the implementation cost of a true streaming pause.
+- The session-reducer still has `APPEND_TO_ACTIVE_SEGMENT` and `APPEND_TO_CLOSING_NARRATION` actions that no caller dispatches. Cleanup pass for v0.11.x.
+- The `Screenshot` type still has `audioOffset` and `reRecordedAudio` fields tied to the old master-audio-and-slicing model. Vestigial; existing sessions continue to display fine. Removing them would be a breaking type change — defer.
+- The "rerecord active segment" hotkey is still in `hotkey_config.rs` and shows up in Settings. The Settings UI lets you rebind it but the rebound combo will fire to nothing. Will quietly remove from the hotkey config + Settings rows in a follow-up; non-blocking for v0.10.0.
+- `--skip-web` again because visionpipe-web is still on `update-website-copy-2026-05-04`.
+
+---
+
+
 ## Progress Update as of 2026-05-06 17:05 PDT — v0.10.0 prep (audio redesign + HistoryHub header)
 
 ### Summary of changes since last update
