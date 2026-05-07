@@ -5,28 +5,12 @@ import { useCredit } from "../state/credit-context";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
 import { VersionBadge } from "./VersionBadge";
 
-export type NetworkState = "live" | "local-only" | "reconnecting";
-
 interface Props {
-  micRecording: boolean;
-  micPermissionDenied: boolean;
-  networkState: NetworkState;
-  onToggleMic: () => void;
   onToggleViewMode: () => void;
   onOpenSettings: () => void;
   onNewSession: () => void;
   onOpenSessionFolder: () => void;
 }
-
-const dotColor = (s: NetworkState, recording: boolean): string => {
-  if (!recording) return C.textDim;
-  if (s === "live") return C.sienna;
-  if (s === "reconnecting") return C.amber;
-  return C.textMuted;
-};
-
-const networkLabel = (s: NetworkState): string =>
-  s === "live" ? "Live" : s === "reconnecting" ? "Reconnecting…" : "Local-only";
 
 export function Header(props: Props) {
   const { state } = useSession();
@@ -58,23 +42,6 @@ export function Header(props: Props) {
 
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <CreditChip />
-        <button
-          onClick={props.onToggleMic}
-          disabled={props.micPermissionDenied}
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "transparent", border: `1px solid ${C.borderLight}`,
-            color: C.textBright, padding: "4px 10px", borderRadius: 4,
-            cursor: props.micPermissionDenied ? "not-allowed" : "pointer", fontFamily: FONT_BODY, fontSize: 12,
-          }}
-          title={props.micPermissionDenied ? "Microphone permission required" : "Toggle recording"}
-        >
-          <span style={{
-            width: 8, height: 8, borderRadius: 999,
-            background: dotColor(props.networkState, props.micRecording),
-          }} />
-          {props.micRecording ? `Recording · ${networkLabel(props.networkState)}` : "Paused"}
-        </button>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

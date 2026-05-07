@@ -4,12 +4,11 @@ import { C, FONT_BODY } from "../lib/ui-tokens";
 
 interface Props {
   onTakeNextScreenshot: () => void;
-  onRequestRerecord: (seq: number) => void;
   onRequestDelete: (seq: number) => void;
   onOpenLightbox: (seq: number) => void;
 }
 
-export function InterleavedView({ onTakeNextScreenshot, onRequestRerecord, onRequestDelete, onOpenLightbox }: Props) {
+export function InterleavedView({ onTakeNextScreenshot, onRequestDelete, onOpenLightbox }: Props) {
   const { state, dispatch } = useSession();
   const session = state.session!;
 
@@ -21,7 +20,6 @@ export function InterleavedView({ onTakeNextScreenshot, onRequestRerecord, onReq
           screenshot={s}
           isActive={i === session.screenshots.length - 1}
           onOpenLightbox={onOpenLightbox}
-          onRequestRerecord={onRequestRerecord}
           onRequestDelete={onRequestDelete}
         />
       ))}

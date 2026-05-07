@@ -6,7 +6,6 @@ import { C, FONT_BODY } from "../lib/ui-tokens";
 
 interface Props {
   onTakeNextScreenshot: () => void;
-  onRequestRerecord: (seq: number) => void;
   onRequestDelete: (seq: number) => void;
 }
 
@@ -25,7 +24,7 @@ interface Props {
  * right transcript column" rendered them as independent stacks — long
  * transcripts caused screenshots to misalign with their transcripts.
  */
-export function SplitView({ onTakeNextScreenshot, onRequestRerecord, onRequestDelete }: Props) {
+export function SplitView({ onTakeNextScreenshot, onRequestDelete }: Props) {
   const { state, dispatch } = useSession();
   const session = state.session!;
   const [lightboxSeq, setLightboxSeq] = useState<number | null>(null);
@@ -39,7 +38,6 @@ export function SplitView({ onTakeNextScreenshot, onRequestRerecord, onRequestDe
             screenshot={s}
             isActive={i === session.screenshots.length - 1}
             onOpenLightbox={setLightboxSeq}
-            onRequestRerecord={onRequestRerecord}
             onRequestDelete={onRequestDelete}
             // Detached default: transcript gets ~2x the horizontal room
             // of the image, but the image is still big enough to read.

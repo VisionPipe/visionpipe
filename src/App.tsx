@@ -3,8 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionProvider, useSession } from "./state/session-context";
-import { MicProvider } from "./state/mic-context";
 import { CreditProvider } from "./state/credit-context";
+import { RecordingProvider } from "./state/recording-context";
 import { MicOnboardingModal } from "./components/MicOnboardingModal";
 import { SelectionOverlay } from "./components/SelectionOverlay";
 import { SessionWindow } from "./components/SessionWindow";
@@ -13,7 +13,6 @@ import { Onboarding } from "./components/Onboarding";
 import { generateCanonicalName } from "./lib/canonical-name";
 import type { PermissionStatus } from "./lib/permissions-types";
 import type { CaptureMetadata, Screenshot } from "./types/session";
-import type { NetworkState } from "./components/Header";
 
 // "onboarding" is the initial mode on every launch. We check permissions
 // immediately and either keep showing the onboarding card (any missing) or
@@ -30,28 +29,14 @@ function AppInner() {
   const modeRef = useRef<AppMode>("onboarding");
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // ── Master audio recorder lifecycle (cpal, on-device) ──
-  // We don't hold a JS-side handle anymore — the recorder lives in Rust as
-  // a global singleton (see audio.rs). React tracks only whether it's
-  // active so the UI mic icon and capture-flow gates can react. After
-  // END_SESSION there's nothing JS-side to clear.
-  const [micRecording, setMicRecording] = useState(false);
-  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
-  // Mic + Speech Recognition permissions are deferred to the FIRST time
-  // the user clicks the mic button in the Header (see MicOnboardingModal).
-  // This preserves the no-fluff onboarding for silent-capture-only users
-  // while still surfacing the explainer for users who want voice notes.
-  const [micOnboardingShown, setMicOnboardingShown] = useState<boolean>(
-    () => localStorage.getItem("vp-mic-onboarded") === "1"
-  );
+  // ── Mic permissions are deferred to the FIRST time the user clicks
+  // "Record audio" on a screenshot card (see RecordingControls). The
+  // onboarding modal is the explainer; after the user grants both Mic +
+  // Speech Recognition permissions (recorded via localStorage
+  // `vp-mic-onboarded` = "1"), subsequent Record clicks go directly to
+  // start_recording without re-prompting.
   const [showMicModal, setShowMicModal] = useState(false);
 
-  // networkState is fixed to "local-only" since the v0.5.2 switch from
-  // Deepgram (cloud streaming) to Apple SFSpeechRecognizer (on-device
-  // batch). Kept as state so the Header indicator API doesn't change; if
-  // we re-enable cloud streaming behind a Settings toggle, this flips
-  // back to "online" / "offline" / "local-only".
-  const [networkState] = useState<NetworkState>("local-only");
   const sessionRef = useRef(state.session);
   useEffect(() => { sessionRef.current = state.session; }, [state.session]);
 
@@ -357,13 +342,11 @@ function AppInner() {
       } else if (matches(e, hotkeys.toggleViewMode)) {
         e.preventDefault();
         if (state.session) dispatch({ type: "TOGGLE_VIEW_MODE" });
-      } else if (matches(e, hotkeys.rerecordActive)) {
-        e.preventDefault();
-        const last = state.session?.screenshots[state.session.screenshots.length - 1];
-        if (last) {
-          window.dispatchEvent(new CustomEvent("vp-rerecord-segment", { detail: { seq: last.seq } }));
-        }
       }
+      // The "rerecord active segment" hotkey was removed in v0.10.0 along
+      // with the modal-based re-record flow. Recording is now per-card via
+      // RecordingControls. The hotkey config still has a slot for it
+      // (Settings panel) for backward-compat, but no handler fires.
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -407,55 +390,21 @@ function AppInner() {
   // dependency entirely. Cloud streaming (Deepgram) was removed in v0.6.0;
   // git history has the implementation if we need to re-enable it behind a
   // Settings toggle.
-  const initSessionAudio = useCallback(async () => {
-    try {
-      // Start the cpal recording for the FIRST segment of this session.
-      // stop_recording_and_transcribe will be called at the next screenshot
-      // boundary, returning the transcript of that segment which we'll
-      // dispatch into the just-finished screenshot's transcriptSegment.
-      await invoke("start_recording");
-      setMicRecording(true);
-    } catch (err) {
-      console.warn("[VisionPipe] start_recording failed (mic permission?):", err);
-      setMicPermissionDenied(true);
-    }
-  }, []);
-
-  // ── Stop the current segment's recording and transcribe it.
-  // Returns the transcript text (may be empty if nothing captured).
-  // Called at every screenshot boundary AND at session-end / new-session.
-  const stopAndTranscribeCurrentSegment = useCallback(async (): Promise<string> => {
-    if (!micRecording) return "";
-    try {
-      const transcript = await invoke<string>("stop_recording");
-      setMicRecording(false);
-      return transcript ?? "";
-    } catch (err) {
-      console.warn("[VisionPipe] stop_recording failed:", err);
-      setMicRecording(false);
-      return "";
-    }
-  }, [micRecording]);
-
-  // ── Mic onboarding modal: triggered the first time the user clicks the
-  // mic button (Header) without having granted mic + speech permissions.
-  // Records that the prompt has been shown so we don't re-prompt on every
-  // click. If the user grants, immediately wire up the recorder for the
-  // current session.
-  const onMicOnboardComplete = useCallback(async (granted: { microphone: boolean; speechRecognition: boolean }) => {
+  // Mic onboarding modal: shown the first time the user clicks
+  // "Record audio" on any ScreenshotCard. After the modal completes
+  // (whether user grants or denies), `vp-mic-onboarded` localStorage is
+  // set so subsequent Record clicks bypass the modal and go straight to
+  // RecordingProvider's start_recording call.
+  const onMicOnboardComplete = useCallback(async (_granted: { microphone: boolean; speechRecognition: boolean }) => {
     setShowMicModal(false);
     localStorage.setItem("vp-mic-onboarded", "1");
-    setMicOnboardingShown(true);
-    if (granted.microphone) {
-      await initSessionAudio();
-    } else {
-      setMicPermissionDenied(true);
-    }
-  }, [initSessionAudio]);
+    // Do not auto-start a recording — the user explicitly clicks Record
+    // again to begin (matches the per-screenshot manual model).
+  }, []);
 
   const onMicOnboardSkip = useCallback(() => {
     setShowMicModal(false);
-    // Don't persist; user can click the mic button again later to retry.
+    // Don't persist; user can click Record again later to re-trigger.
   }, []);
 
   const onCapture = useCallback(async (capturePath: string) => {
@@ -481,31 +430,10 @@ function AppInner() {
           screenshots: [], closingNarration: "",
         },
       });
-      // Kick off the on-device recording for the first segment, only if
-      // the user has already gone through the (deferred) mic onboarding.
-      // Otherwise sessions start SILENT — user can click the mic button
-      // later to trigger the modal and start recording mid-session.
-      if (micOnboardingShown) {
-        await initSessionAudio();
-      }
-    } else if (micRecording) {
-      // SECOND-OR-LATER capture: stop the segment that was being recorded
-      // for the LAST screenshot, transcribe it, and append the result to
-      // that screenshot's narration. Then start a fresh segment for the
-      // new screenshot.
-      const transcript = await stopAndTranscribeCurrentSegment();
-      if (transcript.trim()) {
-        dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
-      }
-      // Restart recording for the new segment (will be transcribed at the
-      // next boundary).
-      try {
-        await invoke("start_recording");
-        setMicRecording(true);
-      } catch (err) {
-        console.warn("[VisionPipe] start_recording (next segment) failed:", err);
-      }
     }
+    // Audio is no longer auto-started on capture (v0.10.0). Each screenshot
+    // gets its own Record button via RecordingControls; sessions are silent
+    // by default until the user explicitly clicks Record on a card.
 
     const seq = (state.session?.screenshots[state.session.screenshots.length - 1]?.seq ?? 0) + 1;
     const canonicalName = generateCanonicalName({
@@ -567,7 +495,7 @@ function AppInner() {
     } catch (err) {
       console.error("[VisionPipe] session window resize failed:", err);
     }
-  }, [state.session, dispatch, micOnboardingShown, micRecording, initSessionAudio, stopAndTranscribeCurrentSegment]);
+  }, [state.session, dispatch]);
 
   const onCancelCapture = useCallback(async () => {
     const win = getCurrentWindow();
@@ -586,75 +514,15 @@ function AppInner() {
     }
   }, [state.session, resizeForHistoryHub]);
 
-  // ── Mic toggle (Header button) ──
-  // First click on a fresh install (or after sign-out): show the mic
-  // onboarding modal which triggers the macOS permission prompts. After
-  // grant, recording starts via onMicOnboardComplete → initSessionAudio.
-  // Subsequent clicks toggle the cpal session-level recording on/off.
-  // (When toggled off mid-session, no transcript is produced for the
-  // partial segment — user can manually type narration.)
-  const onToggleMic = useCallback(async () => {
-    if (!micOnboardingShown) {
-      setShowMicModal(true);
-      return;
-    }
-    if (micRecording) {
-      // Pause: stop + (optionally transcribe) the current segment
-      const transcript = await stopAndTranscribeCurrentSegment();
-      if (transcript.trim()) {
-        // Append to last screenshot (or closing narration if no screenshots)
-        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
-          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: transcript + " " });
-        } else {
-          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
-        }
-      }
-    } else {
-      // Resume: start a fresh recording segment
-      try {
-        await invoke("start_recording");
-        setMicRecording(true);
-      } catch (err) {
-        console.warn("[VisionPipe] mic-toggle start_recording failed:", err);
-      }
-    }
-  }, [micOnboardingShown, micRecording, stopAndTranscribeCurrentSegment, dispatch]);
-
-  // ── Stop the master recorder and drain its final segment.
-  // Called from SessionWindow's "New Session" button before END_SESSION,
-  // and from ReRecordModal so cpal's single-recording slot is free.
-  // Drains the in-flight segment's transcript into the last screenshot
-  // (or closing narration if no screenshots yet) so nothing the user
-  // said before stop is lost.
-  const clearRecorder = useCallback(async () => {
-    if (micRecording) {
-      const transcript = await stopAndTranscribeCurrentSegment();
-      if (transcript.trim()) {
-        if ((sessionRef.current?.screenshots.length ?? 0) === 0) {
-          dispatch({ type: "APPEND_TO_CLOSING_NARRATION", text: transcript + " " });
-        } else {
-          dispatch({ type: "APPEND_TO_ACTIVE_SEGMENT", text: transcript + " " });
-        }
-      }
-    }
-    setMicRecording(false);
-  }, [micRecording, stopAndTranscribeCurrentSegment, dispatch]);
-
-  // No-op kept for MicContext API stability — Deepgram WebSocket path was
-  // removed in v0.5.2 (replaced by Apple SFSpeechRecognizer). If we re-add
-  // cloud streaming behind a Settings toggle, this will become the close
-  // hook again.
-  const closeDeepgram = useCallback(() => {}, []);
-
-  // ── Flush master recorder on window close / app quit ──
-  // beforeunload fires when the Tauri window tears down. Drain the
-  // in-flight segment so the transcript isn't lost. Best-effort: a hard
-  // process kill bypasses this entirely.
+  // ── Best-effort: stop any in-flight cpal recording on window close.
+  // Without a master recorder running, this is rarely needed — only fires
+  // if the user is mid-Record on some card and the window is being torn
+  // down. Saves a stray cpal stream from outliving the app.
   useEffect(() => {
-    const handler = () => { void clearRecorder(); };
+    const handler = () => { void invoke("stop_recording").catch(() => {/* ignore */}); };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [clearRecorder]);
+  }, []);
 
   let view: ReactNode;
   if (mode === "onboarding") {
@@ -677,14 +545,7 @@ function AppInner() {
   }
 
   return (
-    <MicProvider value={{
-      recording: micRecording,
-      permissionDenied: micPermissionDenied,
-      onToggle: onToggleMic,
-      networkState,
-      clearRecorder,
-      closeDeepgram,
-    }}>
+    <>
       {view}
       {showMicModal && (
         <MicOnboardingModal
@@ -692,7 +553,7 @@ function AppInner() {
           onSkip={onMicOnboardSkip}
         />
       )}
-    </MicProvider>
+    </>
   );
 }
 
@@ -700,7 +561,9 @@ export default function App() {
   return (
     <SessionProvider>
       <CreditProvider>
-        <AppInner />
+        <RecordingProvider>
+          <AppInner />
+        </RecordingProvider>
       </CreditProvider>
     </SessionProvider>
   );

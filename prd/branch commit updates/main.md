@@ -4,6 +4,35 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 17:05 PDT — v0.10.0 prep (audio redesign + HistoryHub header)
+
+### Summary of changes since last update
+v0.10.0 audio recording redesign: from "always-on master recorder + per-screenshot slicing" to "per-screenshot on-demand record/pause/resume with a Record button under each Narration label." Header mic button + NetworkState pill removed. ReRecordModal deleted. Plus HistoryHub header now shows bold-brand + orange-pipe + version badge.
+
+### Detail of changes made:
+- **`src/state/recording-context.tsx`** (new): owns the per-screenshot recording state machine (`activeSeq`, `mode`, `elapsedSec`). cpal singleton means only one card can be recording at a time; clicking Record on a different card stops + finalises the first one. Pause/Resume = stop-and-restart (Q1=B): Pause stops the cpal stream + transcribes + parks text in an accumulator; Resume calls start_recording fresh. Stop drains accumulator into the screenshot's transcriptSegment via APPEND (Q2=B). `busyRef` guards against double-fire. Mic onboarding (vp-mic-onboarded localStorage flag) gates the first Record click.
+- **`src/components/RecordingControls.tsx`** (new): three visual states — `[🎙 Record audio]` (idle), `[🔴 0:14 Recording] [Pause]` (recording), `[🔴 0:14 Paused] [Resume]` (paused). Whole record-state pill is one click target that stops/finalises. Renders inside ScreenshotCard between the "Narration" label and the transcript textarea.
+- **`src/App.tsx`**: dropped initSessionAudio, stopAndTranscribeCurrentSegment, onToggleMic, clearRecorder, closeDeepgram, MicProvider wrap, vp-rerecord-segment hotkey dispatch, and the master-recorder beforeunload drain. Replaced beforeunload drain with best-effort `invoke("stop_recording")`. Wrapped inner tree in `<RecordingProvider>`. ~80 lines smaller.
+- **`src/components/Header.tsx`**: removed mic button + NetworkState pill + dotColor/networkLabel helpers. Props simplified to just `onToggleViewMode`, `onOpenSettings`, `onNewSession`, `onOpenSessionFolder`. Middle column now just renders CreditChip.
+- **`src/components/SessionWindow.tsx`**: dropped useMic + rerecordSeq state + ReRecordModal import + requestRerecord handler + the vp-rerecord-segment listener. onCancel + onNewSession now best-effort `invoke("stop_recording")` instead of mic.clearRecorder/closeDeepgram.
+- **`src/components/InterleavedView.tsx` + `SplitView.tsx`**: dropped `onRequestRerecord` prop.
+- **`src/components/ScreenshotCard.tsx`**: replaced the "Re-record" button with `<RecordingControls seq={...} />`. Dropped the `onRequestRerecord` prop. Layout: Narration label, controls, then textarea (controls now flow vertically rather than sit beside the label).
+- **Deleted**: `src/components/ReRecordModal.tsx`, `src/state/mic-context.tsx`.
+- **`src/components/HistoryHub.tsx`**: title bar now has bold-brand with orange-pipe (`Vision<span color=amber>|</span>Pipe`) on the left + `<VersionBadge />` top-right. Matches Onboarding card chrome layout.
+
+### Verified:
+- `cargo build -p visionpipe`: clean.
+- `tsc --noEmit`: exit 0.
+- `vitest run`: 7 files, 47 tests, all pass.
+
+### Potential concerns to address:
+- cpal start/stop boundary at each Pause/Resume can produce a tiny transcription glitch (e.g., re-capitalising first word of chunk 2). Acceptable trade-off vs. true streaming pause.
+- Session-reducer still has `APPEND_TO_ACTIVE_SEGMENT` / `APPEND_TO_CLOSING_NARRATION` actions with no caller. Cleanup follow-up.
+- `Screenshot.audioOffset` + `reRecordedAudio` are vestigial in the new model. Existing sessions still display fine.
+- "Rerecord active segment" hotkey still in hotkey_config.rs + Settings rows but no handler dispatches. Non-blocking; follow-up.
+
+---
+
 ## Progress Update as of 2026-05-06 15:12 PDT — v0.9.5
 *(Most recent updates at top)*
 

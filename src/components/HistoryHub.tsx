@@ -3,6 +3,7 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { Images, Folder, Clipboard, ChevronRight, ChevronDown } from "lucide-react";
 import { C, FONT_BODY } from "../lib/ui-tokens";
 import { HotkeyPill } from "./HotkeyPill";
+import { VersionBadge } from "./VersionBadge";
 
 /**
  * Summary returned by the Rust `list_recent_sessions_cmd` Tauri command.
@@ -142,10 +143,16 @@ export function HistoryHub() {
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.deepForest, color: C.textBright, fontFamily: FONT_BODY }}>
       <div data-tauri-drag-region style={{
         height: 40, paddingLeft: 80, paddingRight: 16, display: "flex",
-        alignItems: "center", borderBottom: `1px solid ${C.border}`,
-        fontSize: 12, color: C.textMuted, userSelect: "none",
+        alignItems: "center", justifyContent: "space-between",
+        borderBottom: `1px solid ${C.border}`, userSelect: "none",
       }}>
-        Vision|Pipe — History
+        <span style={{ fontSize: 13, color: C.textMuted }}>
+          <strong style={{ color: C.textBright }}>
+            Vision<span style={{ color: C.amber }}>|</span>Pipe
+          </strong>
+          {" — History"}
+        </span>
+        <VersionBadge />
       </div>
 
       <div style={{ padding: 20, borderBottom: `1px solid ${C.border}` }}>

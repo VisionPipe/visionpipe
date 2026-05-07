@@ -3,13 +3,13 @@ import { useSession } from "../state/session-context";
 import { C, FONT_BODY, FONT_MONO } from "../lib/ui-tokens";
 import type { Screenshot } from "../types/session";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Mic, X } from "lucide-react";
+import { X } from "lucide-react";
+import { RecordingControls } from "./RecordingControls";
 
 interface Props {
   screenshot: Screenshot;
   isActive: boolean;
   onOpenLightbox: (seq: number) => void;
-  onRequestRerecord: (seq: number) => void;
   onRequestDelete: (seq: number) => void;
   /** Default flex-grow for the image column. Attached view = 1 (50/50);
    *  detached view = 0.45 (transcript gets more horizontal room). Click
@@ -35,7 +35,7 @@ interface Props {
  * transcript pairs with its own image — no more independent stacking.
  */
 export function ScreenshotCard({
-  screenshot, isActive, onOpenLightbox, onRequestRerecord, onRequestDelete,
+  screenshot, isActive, onOpenLightbox, onRequestDelete,
   defaultImageFlex = 1, defaultTranscriptFlex = 1,
 }: Props) {
   const { state, dispatch } = useSession();
@@ -139,38 +139,23 @@ export function ScreenshotCard({
         </code>
       </div>
 
-      {/* TRANSCRIPT COLUMN — flex from props (or expanded inverse), mic button + transcript */}
+      {/* TRANSCRIPT COLUMN — Narration label, recording controls, then transcript box */}
       <div style={{ flex: transcriptFlex, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          marginBottom: 6,
+        <span style={{
+          color: C.textMuted, fontSize: 10, letterSpacing: "0.08em",
+          textTransform: "uppercase", fontFamily: FONT_BODY, marginBottom: 6,
         }}>
-          <span style={{
-            color: C.textMuted, fontSize: 10, letterSpacing: "0.08em",
-            textTransform: "uppercase", fontFamily: FONT_BODY,
-          }}>
-            Narration
-          </span>
-          <button
-            onClick={() => onRequestRerecord(screenshot.seq)}
-            title="Re-record narration for this screenshot"
-            style={{
-              display: "flex", alignItems: "center", gap: 5,
-              background: "transparent", border: `1px solid ${C.borderLight}`,
-              color: C.textBright, padding: "4px 10px", borderRadius: 4,
-              cursor: "pointer", fontSize: 11, fontFamily: FONT_BODY,
-            }}
-          >
-            <Mic size={12} strokeWidth={2} />
-            Re-record
-          </button>
+          Narration
+        </span>
+        <div style={{ marginBottom: 6 }}>
+          <RecordingControls seq={screenshot.seq} />
         </div>
         <textarea
           value={screenshot.transcriptSegment}
           onChange={(e) => dispatch({
             type: "UPDATE_TRANSCRIPT_SEGMENT", seq: screenshot.seq, text: e.target.value,
           })}
-          placeholder={screenshot.offline ? "(offline — audio recorded locally; no transcript)" : "Speak or type narration here…"}
+          placeholder="Type narration here, or click Record audio above…"
           style={{
             width: "100%", flex: 1, minHeight: 140, padding: 10,
             background: C.forest, border: `1px solid ${C.borderLight}`,
