@@ -4,6 +4,30 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 20:33 PDT — v0.10.1
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.10.1 — after a successful Copy to Clipboard or Save to Disk, VisionPipe now drops you back to HistoryHub so you see your just-shipped bundle in the list. Previously you stayed on the active SessionWindow with the toast as the only confirmation; the bundle was already done but the UI didn't say so unambiguously.
+
+### Detail of changes made:
+
+- **`src/components/SessionWindow.tsx`**: new `endSessionAfterSuccess` helper called after either Copy to Clipboard or Save to Disk completes successfully. 1.5 second `setTimeout` so the success toast is readable before SessionWindow unmounts (toast lives inside SessionWindow; on END_SESSION it goes with the rest of the tree). The toast text now ends with "Returning to history…" so the user knows what's about to happen instead of being surprised by the navigation.
+- Both the primary Copy success path and the text-only fallback path get the same auto-return treatment.
+- Save to Disk now also auto-returns to history on success (same UX consistency).
+- Failure paths (insufficient credits, save dialog cancelled, clipboard write failed entirely) still leave the user on SessionWindow so they can retry.
+
+### Potential concerns to address:
+
+- 1.5 s might feel rushed for users who want to read the full toast text. If feedback comes in, easy to tune (or replace with an explicit "✓ Sent" interstitial).
+- The toast text references the saved-to-folder path, which the user no longer sees because they're navigating away. The toast still reads in 1.5 s; the path is also captured in the session folder if they ever go back. Acceptable.
+- `--skip-web` again because `visionpipe-web` is still on `update-website-copy-2026-05-04`.
+
+---
+
+
 ## Progress Update as of 2026-05-06 20:30 PDT — v0.10.1 prep (auto-return-to-history on success)
 
 ### Summary of changes since last update
