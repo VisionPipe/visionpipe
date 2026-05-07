@@ -4,6 +4,27 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-07 15:43 PDT — v0.10.3
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.10.3 — HistoryHub title bar collapsed from 40 px → 28 px so the "Vision|Pipe — History" text vertically aligns with the macOS traffic-light dots in the SAME visual row instead of sitting in a second row beneath them. Vision|Pipe text moved right (paddingLeft 80 → 92) so it has breathing room from the chrome dots.
+
+### Detail of changes made:
+
+- **`src/components/HistoryHub.tsx`** title bar: `height: 40` → `28` (matches macOS chrome height), `paddingLeft: 80` → `92` (clears the close/minimize/zoom dots with extra space), font size 13 → 12 with explicit `lineHeight: 1` so the text vertically centers cleanly on a 28 px row.
+
+### Potential concerns to address:
+
+- This relies on `titleBarStyle: "Overlay"` in `tauri.conf.json` (already set since v0.6.x). Without it, the dots would have their own dedicated chrome area and our 28 px title bar would still sit below them.
+- If macOS's chrome height ever changes (Tahoe 27 already bumped some Mac UI dimensions), this 28 px will need a tweak.
+- `--skip-web` again because `visionpipe-web` is still on `update-website-copy-2026-05-04`.
+
+---
+
+
 ## Progress Update as of 2026-05-06 20:40 PDT — v0.10.2
 *(Most recent updates at top)*
 
