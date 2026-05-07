@@ -4,6 +4,38 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 20:40 PDT — v0.10.2
+*(Most recent updates at top)*
+
+
+### Summary of changes since last update
+
+v0.10.2 — recording controls polished (non-clickable status pill, explicit Save button, Cancel link), fullscreen capture (Enter key) actually works now, HistoryHub CTA + hotkey hint are on one centered line.
+
+### Detail of changes made:
+
+- **`src/components/RecordingControls.tsx` — explicit Save + Cancel.** While recording or paused, the layout is now:
+    `[🔴 0:14 Recording]` `[Pause]` `[Save]` or _cancel_
+  - The "Recording / Paused" pill is now a **status div, not a button** — Save and Cancel are the explicit terminal actions, so making the pill clickable was confusing.
+  - The pill's border-radius dropped from 999 (capsule) → 4 to match the idle Record audio button. Same shape language across all three states.
+  - **Save** (teal solid button) calls the existing toggleRecord finalize path: stop → transcribe → APPEND to transcriptSegment.
+  - **Cancel** (sienna underlined link, "or _cancel_") discards the recording entirely — no transcript, no append. Backed by a new `discard_recording` Tauri command + `audio::discard_recording()` Rust function that just stops the cpal stream and clears the sample buffer (no SFSpeechRecognizer run). Saves a few seconds of wasted CPU when the user is throwing away audio anyway.
+  - `RecordingProvider.discardRecording()` resets context state without dispatching to the session reducer.
+
+- **`src/components/SelectionOverlay.tsx` — Enter for fullscreen actually works.** `captureFullscreen` was missing the `await win.hide() + 300 ms` step that drag-region capture has, so screencapture was capturing VP's own overlay (orange hint pill on top of the desktop) instead of the desktop alone. Now hides + waits + captures + on error brings the overlay back so the user can retry.
+
+- **`src/components/HistoryHub.tsx` — CTA + hotkey hint on one centered line.** Was: button stacked above hint. Now: button + "or press ⌘⇧C from anywhere" side-by-side, both centered on the row.
+
+### Potential concerns to address:
+
+- The Save button uses a teal solid background (matching Copy to Clipboard's primary-action treatment). If users find the recording controls visually loud, the Save button can downgrade to outlined.
+- `cancel` link uses sienna red so it reads as "destructive." May want to bump opacity / underline-thickness if it disappears against the dark forest background.
+- `--skip-web` again because `visionpipe-web` is still on `update-website-copy-2026-05-04`.
+- Real-time waveform feedback during recording is requested next; that's v0.10.3 (cpal thread emits Tauri events with audio levels at ~30Hz; RecordingControls renders a sliding-window SVG above the textarea).
+
+---
+
+
 ## Progress Update as of 2026-05-06 20:38 PDT — v0.10.2 prep (Save/Cancel + fullscreen fix + HistoryHub layout)
 
 ### Summary of changes since last update
