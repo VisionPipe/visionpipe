@@ -155,7 +155,13 @@ export function HistoryHub() {
         <VersionBadge />
       </div>
 
-      <div style={{ padding: 20, borderBottom: `1px solid ${C.border}` }}>
+      <div style={{
+        padding: 20, borderBottom: `1px solid ${C.border}`,
+        // Center the CTA + hotkey hint on one horizontal line.
+        // Pre-v0.10.2 the hotkey hint sat below the button; users felt
+        // it competed with the button rather than complementing it.
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 20,
+      }}>
         <button
           onClick={onNewBundle}
           style={{
@@ -168,7 +174,7 @@ export function HistoryHub() {
           <Images size={18} />
           Multi-Screenshot Bundle
         </button>
-        <div style={{ marginTop: 8, fontSize: 11, color: C.textDim, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ fontSize: 12, color: C.textDim, display: "flex", alignItems: "center", gap: 8 }}>
           <span>or press</span>
           <HotkeyPill />
           <span>from anywhere</span>

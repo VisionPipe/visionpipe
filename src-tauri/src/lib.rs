@@ -883,6 +883,15 @@ async fn stop_recording() -> Result<String, String> {
         .map_err(|e| format!("Channel error: {}", e))?
 }
 
+/// Stop the current cpal stream and DISCARD the captured samples — no
+/// transcription, no return value. Used by the Cancel link in
+/// RecordingControls when the user wants to throw away the current
+/// recording without billing the user's time on a wasted SFSpeech run.
+#[tauri::command]
+async fn discard_recording() -> Result<(), String> {
+    audio::discard_recording()
+}
+
 #[tauri::command]
 async fn create_session_folder(session_id: String) -> Result<String, String> {
     session::create_session_folder(&session_id)
@@ -1216,6 +1225,7 @@ pub fn run() {
             request_speech_recognition,
             start_recording,
             stop_recording,
+            discard_recording,
             create_session_folder,
             write_session_file,
             move_to_deleted,

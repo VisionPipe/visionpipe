@@ -59,8 +59,22 @@ export function SelectionOverlay({ onCapture, onCancel, captureMode = "region" }
   }, [onCapture, captureMode]);
 
   const captureFullscreen = useCallback(async () => {
-    const capturePath = await invoke<string>("capture_fullscreen");
-    onCapture(capturePath);
+    // Hide the VP window first, otherwise screencapture captures our own
+    // hint pill ("Drag a region · Enter for fullscreen") on top of the
+    // desktop. The 300 ms wait gives macOS time to actually hide the
+    // window before the screencapture subprocess runs. Mirrors the same
+    // hide-then-capture pattern used by completeSelection().
+    const win = getCurrentWindow();
+    await win.hide();
+    await new Promise((r) => setTimeout(r, 300));
+    try {
+      const capturePath = await invoke<string>("capture_fullscreen");
+      onCapture(capturePath);
+    } catch (err) {
+      console.error("[VisionPipe] capture_fullscreen failed:", err);
+      // Bring the overlay back so the user can try again.
+      await win.show();
+    }
   }, [onCapture]);
 
   useEffect(() => {

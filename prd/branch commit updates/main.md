@@ -4,6 +4,31 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 20:38 PDT — v0.10.2 prep (Save/Cancel + fullscreen fix + HistoryHub layout)
+
+### Summary of changes since last update
+Five fixes for v0.10.2: (1) RecordingControls "Recording / Paused" pill is non-clickable now; explicit Save + Cancel buttons take its place. (2) Pill border-radius dropped 999→4 to match idle Record button. (3) New `discard_recording` Tauri command + `audio::discard_recording` Rust fn for the Cancel path (stops cpal without transcribing). (4) `captureFullscreen` (Enter key) now hides VP window before screencapture — was capturing its own overlay. (5) HistoryHub CTA + hotkey hint on one centered line instead of stacked.
+
+### Detail of changes made:
+- **`src/components/RecordingControls.tsx`**: rewrote the recording-mode layout. Non-clickable status pill (border-radius 4), then Pause/Resume button, then a teal Save button, then "or _cancel_" link. Cancel calls `discardRecording()` to throw away the audio without transcribing.
+- **`src/state/recording-context.tsx`**: added `discardRecording()` to context value. Calls `invoke("discard_recording")`, resets internal accumulator + activeSeq + mode without dispatching to session reducer.
+- **`src-tauri/src/audio.rs`**: new `discard_recording()` function — sets `is_recording=false`, sleeps 150ms for the recording thread to drain, clears the sample buffer. No transcription run; saves a few seconds of CPU.
+- **`src-tauri/src/lib.rs`**: new `discard_recording` Tauri command, registered in `invoke_handler!`.
+- **`src/components/SelectionOverlay.tsx`**: `captureFullscreen` now `await win.hide()` + 300 ms before invoke, restores window on error so the user can retry. Fixes the Enter-for-fullscreen bug where screencapture captured VP's own overlay.
+- **`src/components/HistoryHub.tsx`**: header section flex-row + center-aligned, button and hotkey hint on one line.
+
+### Verified:
+- `cargo build -p visionpipe`: clean.
+- `tsc --noEmit`: exit 0.
+- `vitest run`: 7 files, 47 tests, all pass.
+
+### Potential concerns to address:
+- The Save button uses primary-action teal styling; if visually loud, easy to downgrade to outlined.
+- "or _cancel_" link is sienna underlined to read as destructive. May need a contrast bump if it gets lost on the dark background.
+- Real-time waveform during recording is the user's next request (v0.10.3) — needs cpal thread to emit Tauri events with audio levels at ~30Hz, RecordingControls renders an SVG sliding window above the textarea.
+
+---
+
 ## Progress Update as of 2026-05-06 20:33 PDT — v0.10.1
 *(Most recent updates at top)*
 

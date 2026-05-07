@@ -189,6 +189,23 @@ pub fn start_recording() -> Result<(), String> {
 }
 
 /// Stop recording, write WAV to disk, run speech recognition, return transcript.
+/// Stop the cpal stream and discard the captured samples without
+/// running speech recognition. Used by the Cancel link in
+/// RecordingControls — the user is throwing away whatever they just
+/// said, so transcription would be wasted CPU. Idempotent: returns Ok
+/// even if no recording is active.
+pub fn discard_recording() -> Result<(), String> {
+    let state = get_state();
+    state.is_recording.store(false, Ordering::SeqCst);
+    // Brief wait so the recording thread sees the flag and stops
+    // writing samples before we clear the buffer.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    if let Ok(mut buf) = state.samples.lock() {
+        buf.clear();
+    }
+    Ok(())
+}
+
 pub fn stop_recording_and_transcribe() -> Result<String, String> {
     let state = get_state();
 

@@ -22,6 +22,13 @@ interface RecordingContextValue {
   toggleRecord: (seq: number) => Promise<void>;
   /** "Pause"/"Resume" toggle. No-op when no active recording. */
   pauseOrResume: () => Promise<void>;
+  /**
+   * Discard the in-flight recording (and any accumulated chunks from
+   * prior pause/resume cycles) without transcribing or appending to the
+   * screenshot's transcriptSegment. Used by the Cancel link in
+   * RecordingControls.
+   */
+  discardRecording: () => Promise<void>;
 }
 
 const RecordingContext = createContext<RecordingContextValue | null>(null);
@@ -163,6 +170,31 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     }
   }, [mode, activeSeq, startNewRecording, stopCurrentChunkAndAccumulate, finalize]);
 
+  const discardRecording = useCallback(async () => {
+    if (busyRef.current) return;
+    if (activeSeq === null) return;
+    busyRef.current = true;
+    try {
+      // discard_recording is the no-transcribe stop. Idempotent —
+      // safe to call from either recording or paused mode.
+      try {
+        await invoke("discard_recording");
+      } catch (err) {
+        console.warn("[VisionPipe] discard_recording failed:", err);
+      }
+      // Reset state without dispatching to the session — the user is
+      // throwing this recording away.
+      accumulatedRef.current = "";
+      chunkBaseSecRef.current = 0;
+      chunkStartMsRef.current = 0;
+      setActiveSeq(null);
+      setMode("idle");
+      setElapsedSec(0);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [activeSeq]);
+
   const pauseOrResume = useCallback(async () => {
     if (busyRef.current) return;
     if (activeSeq === null) return;
@@ -186,7 +218,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   }, [mode, activeSeq, stopCurrentChunkAndAccumulate]);
 
   return (
-    <RecordingContext.Provider value={{ activeSeq, mode, elapsedSec, toggleRecord, pauseOrResume }}>
+    <RecordingContext.Provider value={{ activeSeq, mode, elapsedSec, toggleRecord, pauseOrResume, discardRecording }}>
       {children}
     </RecordingContext.Provider>
   );
