@@ -142,11 +142,18 @@ export function HistoryHub() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.deepForest, color: C.textBright, fontFamily: FONT_BODY }}>
       <div data-tauri-drag-region style={{
-        height: 40, paddingLeft: 80, paddingRight: 16, display: "flex",
+        // 28 px — same height as macOS chrome (close/minimize/zoom dots),
+        // so the brand text vertically centers on the SAME visual row as
+        // the dots instead of sitting in a second row below them.
+        // titleBarStyle: "Overlay" in tauri.conf.json lets our title bar
+        // overlap the chrome area; paddingLeft 92 clears the dots with a
+        // bit of breathing room.
+        height: 28, paddingLeft: 92, paddingRight: 16, display: "flex",
         alignItems: "center", justifyContent: "space-between",
         borderBottom: `1px solid ${C.border}`, userSelect: "none",
+        background: C.deepForest,
       }}>
-        <span style={{ fontSize: 13, color: C.textMuted }}>
+        <span style={{ fontSize: 12, color: C.textMuted, lineHeight: 1 }}>
           <strong style={{ color: C.textBright }}>
             Vision<span style={{ color: C.amber }}>|</span>Pipe
           </strong>

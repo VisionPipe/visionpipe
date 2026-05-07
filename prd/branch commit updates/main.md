@@ -36,6 +36,21 @@ v0.10.2 — recording controls polished (non-clickable status pill, explicit Sav
 ---
 
 
+## Progress Update as of 2026-05-07 06:55 PDT — v0.10.3 prep (HistoryHub title bar height fix)
+
+### Summary of changes since last update
+User reported: "the three dots are too high up. They should be in the same row as the vision pipe title." The HistoryHub title bar was 40 px tall, putting the Vision|Pipe text below the macOS chrome dots (which sit at the very top of the window). Result: two visual rows where there should be one. Fix: shrink title bar to 28 px (matches macOS chrome height) so the text vertically centers on the same row as the dots; bump paddingLeft from 80 → 92 so Vision|Pipe doesn't crowd them.
+
+### Detail of changes made:
+- **`src/components/HistoryHub.tsx`** title bar: height 40 → 28; paddingLeft 80 → 92; font-size 13 → 12 with `lineHeight: 1` for clean vertical centering.
+
+### Potential concerns to address:
+- Relies on `titleBarStyle: "Overlay"` in `tauri.conf.json` (set since v0.6.x). Without it the dots get their own chrome area below ours.
+- If macOS Tahoe 27+ changes chrome dimensions, this 28 px will need re-tuning.
+- This is the kind of layout bug a 30-second manual smoke-test would catch before shipping. Tighter cadence going forward.
+
+---
+
 ## Progress Update as of 2026-05-06 20:38 PDT — v0.10.2 prep (Save/Cancel + fullscreen fix + HistoryHub layout)
 
 ### Summary of changes since last update
