@@ -4,6 +4,20 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-06 20:30 PDT — v0.10.1 prep (auto-return-to-history on success)
+
+### Summary of changes since last update
+After Copy to Clipboard or Save to Disk succeeds, the app now drops back to HistoryHub instead of leaving the user on the SessionWindow. 1.5 s delay so the success toast is readable. Failure paths still keep the user on SessionWindow so they can retry.
+
+### Detail of changes made:
+- **`src/components/SessionWindow.tsx`**: added `endSessionAfterSuccess` helper that wraps the existing END_SESSION + stop_recording + refresh_tray dance in a `setTimeout(1500)`. Called from the primary Copy success path, the text-only fallback path, and the Save-to-disk success path. Toast text amended to include "Returning to history…" so the navigation isn't a surprise.
+
+### Potential concerns to address:
+- 1.5 s might be too short for slow readers. If users complain, easy to bump or replace with an explicit "✓ Sent" interstitial.
+- Failure paths (insufficient credits, save dialog cancelled) still keep the user on SessionWindow, intentionally — they'd want to retry from where they are.
+
+---
+
 ## Progress Update as of 2026-05-06 17:09 PDT — v0.10.0
 *(Most recent updates at top)*
 

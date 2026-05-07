@@ -34,6 +34,19 @@ export function SessionWindow() {
   // text) and a file URL (paste into Finder produces a .md file; drag
   // into Claude Code attaches as a file Read can open). The dual-rep
   // pattern is the same as save_and_copy_image (PNG bytes + file URL).
+  // After a successful Copy/Save the session is "done" — drop back to
+  // HistoryHub so the user sees their just-shipped bundle in the list.
+  // 1.5 s delay so the success toast is visible before SessionWindow
+  // unmounts (toast lives inside this component; after END_SESSION it's
+  // gone with the rest of the tree).
+  const endSessionAfterSuccess = useCallback(() => {
+    setTimeout(() => {
+      void invoke("stop_recording").catch(() => {/* fine if nothing recording */});
+      dispatch({ type: "END_SESSION" });
+      void invoke("refresh_tray").catch(() => {/* best-effort */});
+    }, 1500);
+  }, [dispatch]);
+
   const onCopyAndSend = useCallback(async () => {
     if (!state.session) {
       setToast({ kind: "err", text: "No active session to copy." });
@@ -64,8 +77,9 @@ export function SessionWindow() {
       });
       setToast({
         kind: "ok",
-        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript (${deductedCost.total} cr deducted). Paste as text in chat, OR paste in Finder to drop ${bundleFilename} (saved at ${path}).`,
+        text: `Copied ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript (${deductedCost.total} cr deducted). ${bundleFilename} saved to the session folder. Returning to history…`,
       });
+      endSessionAfterSuccess();
     } catch (err) {
       console.error("[VisionPipe] Copy & Send failed:", err);
       // Last-resort fallback: text-only clipboard write so the user gets
@@ -80,8 +94,9 @@ export function SessionWindow() {
         });
         setToast({
           kind: "ok",
-          text: `Copied as text only (file-clipboard failed). ${bundleFilename} is in the session folder. ${deductedCost.total} cr deducted.`,
+          text: `Copied as text only (file-clipboard failed). ${bundleFilename} is in the session folder. ${deductedCost.total} cr deducted. Returning to history…`,
         });
+        endSessionAfterSuccess();
       } catch (innerErr) {
         setToast({
           kind: "err",
@@ -89,7 +104,7 @@ export function SessionWindow() {
         });
       }
     }
-  }, [state.session, deductForBundle]);
+  }, [state.session, deductForBundle, endSessionAfterSuccess]);
 
   // Listen for the window-scoped Copy & Send hotkey dispatched by App.tsx.
   useEffect(() => {
@@ -150,15 +165,16 @@ export function SessionWindow() {
       });
       setToast({
         kind: "ok",
-        text: `Saved ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript to ${targetPath} (${deductedCost.total} cr deducted).`,
+        text: `Saved ${session.screenshots.length} screenshot${session.screenshots.length === 1 ? "" : "s"} + transcript to ${targetPath} (${deductedCost.total} cr deducted). Returning to history…`,
       });
+      endSessionAfterSuccess();
     } catch (err) {
       setToast({
         kind: "err",
         text: `Save failed AFTER deducting ${deductedCost.total} credits: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
-  }, [state.session, deductForBundle]);
+  }, [state.session, deductForBundle, endSessionAfterSuccess]);
 
   // ── Cancel the active session ──
   // Confirms (Tauri 2 routes window.confirm through plugin:dialog — fixed
