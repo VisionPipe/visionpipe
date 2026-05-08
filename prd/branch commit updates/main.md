@@ -4,6 +4,23 @@ This document tracks progress on the `main` branch of VisionPipe. It is updated 
 
 ---
 
+## Progress Update as of 2026-05-07 23:30 PDT — Claude memory moved into the repo
+
+### Summary of changes since last update
+Claude Code's per-project memory directory (which was local-only at `~/.claude/projects/<slug>/memory/`) is now version-controlled in `docs/claude-memory/`. The local memory dir is now a symlink to the in-repo copy, so this Mac keeps working as before AND a fresh clone on another Mac can opt into the same memory by following the README's setup snippet.
+
+### Detail of changes made:
+- **`docs/claude-memory/MEMORY.md`** + **`release-workflow.md`** + **`tauri-gotchas.md`**: copied from `~/.claude/projects/-Users-drodio-projects-visionpipe/memory/`. These hold the running list of platform pitfalls (8 entries grown over the v0.7.0 → v0.10.3 work) and the release-cadence guidance. Treating them as project documentation instead of per-machine notes means a future Claude session on a fresh clone immediately knows about the audioSeconds camelCase bug, the global-shortcut deadlock pattern, the TCC main-thread dispatch issue, etc.
+- **`docs/claude-memory/README.md`** (new): explains what the directory is, the per-machine setup snippet (`ln -s "$PWD/docs/claude-memory" ~/.claude/projects/<slug>/memory`), and what NOT to put in it (no secrets, no per-user preferences).
+- **Local symlink**: `~/.claude/projects/-Users-drodio-projects-visionpipe/memory` now points at `/Users/drodio/projects/visionpipe/docs/claude-memory`. Claude Code's auto-loader follows symlinks transparently. New memory additions written to the auto-loaded path will land in the repo working tree on this Mac, ready to commit.
+
+### Potential concerns to address:
+- A new Mac cloning this repo gets the memory FILES via the clone, but still needs the symlink set up manually (one-liner in the README). Could add a `pnpm setup` or `make setup` script that also links it; defer until it's needed.
+- Memory can change as we learn — every memory edit will now show up in `git status`, which is louder than the prior local-only flow. Counter-balanced by the value of having a teammate / future-self able to review the deltas.
+- Since memory edits go into commits, future Claude sessions might want to be a bit more deliberate about additions (no random scratch-pad entries).
+
+---
+
 ## Progress Update as of 2026-05-07 15:43 PDT — v0.10.3
 *(Most recent updates at top)*
 

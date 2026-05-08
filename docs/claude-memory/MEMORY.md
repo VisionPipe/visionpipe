@@ -1,0 +1,2 @@
+- [Release workflow](release-workflow.md) — Run `./scripts/release.sh` (default patch; `--bump minor` for features). Fully automated: bump → build → sign → notarize → DMG → push to both repos → GitHub release → homebrew tap. Don't do steps manually.
+- [Tauri/Rust gotchas](tauri-gotchas.md) — READ BEFORE writing native code. Real bugs that shipped (audioSeconds camelCase, global-shortcut deadlock, TCC dispatch hang). Append new gotchas as they surface; don't replace the existing list.
